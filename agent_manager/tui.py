@@ -140,6 +140,8 @@ def render_header(view: dict) -> Panel:
 def render_agent(agent: dict, pending: list[dict]) -> Panel:
     color = _tone_color(agent)
     lines: list[RenderableType] = [Text(row, style=color) for row in DESK_ART]
+    if agent.get("model"):
+        lines.append(Text(f"modelo: {str(agent['model']).split('/')[-1]}", style="dim"))
     lines.append(Text(labels.status_text(agent), style=f"bold {color}"))
     if agent.get("detail"):
         lines.append(Text(agent["detail"], style="dim"))

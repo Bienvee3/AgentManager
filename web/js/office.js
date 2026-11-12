@@ -29,7 +29,7 @@ function buildCubicle(agent) {
   scene.append(agentBox, desk, monitor);
 
   const plate = el("div", "nameplate");
-  plate.append(el("span", "np-name"), el("span", "np-role"));
+  plate.append(el("span", "np-name"), el("span", "np-role"), el("span", "np-model"));
 
   cubicle.append(slot, tag, scene, plate);
   cubicle._avatarKey = `${agent.avatar}`;
@@ -62,6 +62,9 @@ function updateCubicle(cubicle, agent, pending, callbacks, api) {
   const role = cubicle.querySelector(".np-role");
   setText(role, agent.role || "");
   role.hidden = !agent.role;
+  const model = cubicle.querySelector(".np-model");
+  setText(model, agent.model ? agent.model.split("/").pop() : "");
+  model.hidden = !agent.model;
 
   renderBubble(cubicle, pending, callbacks, api);
 }

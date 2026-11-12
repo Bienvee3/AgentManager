@@ -1,0 +1,511 @@
+"""omp (oh-my-pi) integration: per-project agent roster + live session watcher.
+
+Two independent pieces, both read-only and project-driven (nothing is hard-coded):
+
+* ``discover_roster``  - the agent *definitions* omp would offer in a project:
+  nearest ``<project>/.omp/agents/*.md``, then ``~/.omp/agent/agents/*.md``, then the
+  bundled agents (first name wins, like omp's own discovery). Each definition's model
+  is resolved through ``modelRoles`` in omp's ``config.yml``.
+* ``OmpWatcher`` - tails the project's omp session files
+  (``<agent dir>/sessions/<project slug>/<session>.jsonl`` and the per-subagent
+  ``<session>/<Name>.jsonl`` files) and turns them into live agent status.
+
+Only structural fields are read (model, stop reason, tool name, intent). Usage and cost
+records present in those files are deliberately ignored.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterator
+
+import yaml
+
+from .models import AgentState, Status
+
+# Bundled omp agents are embedded in the omp binary (no file to read).
+BUNDLED_AGENTS = {
+    "task": "General-purpose subagent",
+    "scout": "Read-only codebase scout",
+    "reviewer": "Code review",
+    "security-reviewer": "Security review",
+    "sonic": "Mechanical low-reasoning agent",
+}
+MAIN_AGENT_ID = "omp-main"
+IDLE_AFTER_S = 300  # unfinished work with no file activity for this long is shown as paused
+FRESH_S = 3600  # session files untouched for longer than this are not live: shown offline / not listed
+MAX_LINE_BYTES = 64 * 1024 * 1024
+
+
+def agent_dir() -> Path:
+    env = os.environ.get("PI_CODING_AGENT_DIR")
+    return Path(env).expanduser() if env else Path.home() / ".omp" / "agent"
+
+
+def slug(name: str, prefix: str = "") -> str:
+    text = re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-") or "agent"
+    return (prefix + text)[:64].strip("-") or "agent"
+
+
+# --------------------------------------------------------------------------- roster
+
+
+@dataclass
+class AgentDef:
+    name: str
+    description: str = ""
+    model: str | None = None  # first selector of the frontmatter list, unresolved (may be "@role")
+    source: str = "user"  # project | user | bundled
+
+
+def _frontmatter(path: Path) -> dict[str, Any] | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.match(r"^---\s*\r?\n(.*?)\r?\n---", text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = yaml.safe_load(match.group(1).replace("\t", "  "))
+    except yaml.YAMLError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _load_defs(directory: Path, source: str) -> list[AgentDef]:
+    defs: list[AgentDef] = []
+    for path in sorted(directory.glob("*.md")) if directory.is_dir() else []:
+        meta = _frontmatter(path)
+        if not meta or not isinstance(meta.get("name"), str) or not isinstance(meta.get("description"), str):
+            continue  # omp skips invalid definitions too
+        model = meta.get("model")
+        if isinstance(model, str):
+            model = model.split(",")[0].strip()
+        elif isinstance(model, list) and model:
+            model = str(model[0]).strip()
+        else:
+            model = None
+        defs.append(AgentDef(meta["name"].strip(), meta["description"].strip(), model or None, source))
+    return defs
+
+
+def _nearest_project_agents_dir(project: Path) -> Path | None:
+    for directory in [project, *project.parents]:
+        candidate = directory / ".omp" / "agents"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def load_agent_defs(project: Path, home_agent_dir: Path) -> list[AgentDef]:
+    seen: set[str] = set()
+    result: list[AgentDef] = []
+    project_dir = _nearest_project_agents_dir(project)
+    groups = [
+        _load_defs(project_dir, "project") if project_dir else [],
+        _load_defs(home_agent_dir / "agents", "user"),
+        [AgentDef(name, desc, None, "bundled") for name, desc in BUNDLED_AGENTS.items()],
+    ]
+    for group in groups:
+        for definition in group:
+            if definition.name not in seen:
+                seen.add(definition.name)
+                result.append(definition)
+    return result
+
+
+@dataclass
+class ModelConfig:
+    roles: dict[str, str] = field(default_factory=dict)
+    agent_overrides: dict[str, str] = field(default_factory=dict)
+
+    def resolve(self, selector: str | None) -> str | None:
+        """Expand an ``@role`` alias through modelRoles; concrete selectors pass through."""
+        if not selector:
+            return None
+        if selector.startswith("@"):
+            return self.roles.get(selector[1:])
+        return selector
+
+
+def load_model_config(project: Path, home_agent_dir: Path) -> ModelConfig:
+    config = ModelConfig()
+    # Global first, project overlay second. The project overlay file name is an
+    # assumption (unverified); a missing file is simply ignored.
+    for path in (home_agent_dir / "config.yml", project / ".omp" / "config.yml"):
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        roles = data.get("modelRoles")
+        if isinstance(roles, dict):
+            config.roles.update({str(k): str(v) for k, v in roles.items()})
+        task_cfg = data.get("task")
+        overrides = task_cfg.get("agentModelOverrides") if isinstance(task_cfg, dict) else None
+        if isinstance(overrides, dict):
+            config.agent_overrides.update({str(k): str(v) for k, v in overrides.items()})
+    return config
+
+
+def agent_model(definition: AgentDef, cfg: ModelConfig) -> str | None:
+    selector = cfg.agent_overrides.get(definition.name) or definition.model
+    # Without an explicit model omp falls back to the parent's active model.
+    return cfg.resolve(selector) or cfg.roles.get("default")
+
+
+def discover_roster(project: Path, home_agent_dir: Path | None = None) -> list[AgentState]:
+    """Agents omp would offer in ``project``: main session first, then definitions."""
+    home = home_agent_dir or agent_dir()
+    cfg = load_model_config(project, home)
+    agents = [
+        AgentState(
+            id=MAIN_AGENT_ID,
+            name="Sesión principal",
+            role="omp main",
+            model=cfg.roles.get("default"),
+            desk=0,
+            source="config",
+            status=Status.offline,
+        )
+    ]
+    for index, definition in enumerate(load_agent_defs(project, home), start=1):
+        agents.append(
+            AgentState(
+                id=slug(definition.name),
+                name=definition.name,
+                role=definition.source if definition.source != "bundled" else "bundled",
+                model=agent_model(definition, cfg),
+                desk=index,
+                source="config",
+                status=Status.idle,
+                detail="Disponible",
+            )
+        )
+    return agents
+
+
+# --------------------------------------------------------------------------- sessions
+
+
+def _read_header_cwd(path: Path) -> str | None:
+    try:
+        with path.open("rb") as fh:
+            for _ in range(3):
+                line = fh.readline(1_000_000)
+                if b'"type":"session"' in line[:40]:
+                    return json.loads(line).get("cwd")
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def _same_path(a: str | Path, b: str | Path) -> bool:
+    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
+
+
+def find_sessions_dir(project: Path, home_agent_dir: Path) -> Path | None:
+    root = home_agent_dir / "sessions"
+    if not root.is_dir():
+        return None
+    candidates: list[Path] = []
+    try:
+        rel = project.relative_to(Path.home())
+        candidates.append(root / ("-" + "-".join(rel.parts)))
+    except ValueError:
+        pass
+    candidates.extend(d for d in root.iterdir() if d.is_dir() and d not in candidates)
+    for directory in candidates:
+        if not directory.is_dir():
+            continue
+        files = sorted(directory.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for path in files[:1]:
+            cwd = _read_header_cwd(path)
+            if cwd and _same_path(cwd, project):
+                return directory
+    return None
+
+
+def _session_activity(path: Path) -> float:
+    latest = path.stat().st_mtime
+    children = path.with_suffix("")
+    if children.is_dir():
+        for child in children.glob("*.jsonl"):
+            latest = max(latest, child.stat().st_mtime)
+    return latest
+
+
+def _quiet_for(path: Path) -> float:
+    try:
+        return time.time() - path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def newest_session(directory: Path) -> Path | None:
+    best: tuple[float, Path] | None = None
+    for path in directory.glob("*.jsonl"):
+        try:
+            stamp = _session_activity(path)
+        except OSError:
+            continue
+        if best is None or stamp > best[0]:
+            best = (stamp, path)
+    return best[1] if best else None
+
+
+@dataclass
+class Update:
+    key: str  # file path, stable per agent
+    agent_id: str
+    name: str
+    role: str
+    model: str | None
+    status: Status
+    task: str
+    detail: str
+    error_kind: str | None
+    logs: list[tuple[str, str]] = field(default_factory=list)
+    is_main: bool = False
+
+
+class Tracker:
+    """Incrementally folds one omp session file into an agent snapshot."""
+
+    def __init__(self, path: Path, is_main: bool, default_model: str | None) -> None:
+        self.path = path
+        self.is_main = is_main
+        self.offset = 0
+        self.buffer = b""
+        self.replayed = False
+        self.model = default_model
+        self.definition = ""
+        self.status = Status.working if not is_main else Status.idle
+        self.task = ""
+        self.detail = ""
+        self.error_kind: str | None = None
+        self.exited = False
+        self.logs: list[tuple[str, str]] = []
+
+    # -- file reading ---------------------------------------------------------
+
+    def _lines(self) -> Iterator[bytes]:
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            return
+        if size < self.offset:  # truncated / rewritten
+            self.offset, self.buffer = 0, b""
+        with self.path.open("rb") as fh:
+            fh.seek(self.offset)
+            while chunk := fh.read(1 << 20):
+                self.offset += len(chunk)
+                self.buffer += chunk
+                *lines, self.buffer = self.buffer.split(b"\n")
+                yield from lines
+                if len(self.buffer) > MAX_LINE_BYTES:
+                    self.buffer = b""
+
+    # -- event folding -----------------------------------------------------------
+
+    def _finish_turn(self) -> None:
+        self.error_kind = None
+        self.task = ""
+        if self.is_main:
+            self.status, self.detail = Status.waiting_input, "Esperando tu input"
+        else:
+            self.status, self.detail = Status.idle, "Tarea completada"
+
+    def _handle(self, line: bytes) -> None:
+        head = line[:200]
+        if b'"type":"model_change"' in head:
+            event = json.loads(line)
+            if self.is_main or str(event.get("role", "")).startswith("subagent:"):
+                self.model = event.get("model") or self.model
+        elif b'"type":"session_init"' in head:
+            event = json.loads(line)
+            self.definition = str(event.get("agent") or "")
+            self.model = event.get("resolvedModel") or self.model
+        elif b'"type":"custom"' in head:
+            if b"session_exit" in line[:400]:
+                self.exited = True
+                self.task = ""
+                if self.is_main:
+                    self.status, self.detail = Status.offline, "Sesión cerrada"
+                elif self.status == Status.working:
+                    self.status, self.detail = Status.idle, "Sesión cerrada"
+        elif b'"type":"message"' in line[:120]:
+            self._handle_message(line)
+
+    def _handle_message(self, line: bytes) -> None:
+        marker = line.find(b'"role":"', 0, 600)
+        role = line[marker + 8 : marker + 24].split(b'"', 1)[0].decode() if marker >= 0 else ""
+        self.exited = False
+        if role == "toolResult":
+            self.status, self.error_kind = Status.working, None
+        elif role == "user":
+            self.status, self.error_kind = Status.working, None
+            self.task, self.detail = "", "Procesando" if self.is_main else "Tarea recibida"
+        elif role == "assistant":
+            message = json.loads(line).get("message", {})
+            calls = [c for c in message.get("content", []) if isinstance(c, dict) and c.get("type") == "toolCall"]
+            stop = message.get("stopReason")
+            if stop == "error":
+                text = str(message.get("errorMessage") or "")
+                lowered = text.lower()
+                self.status = Status.error
+                self.error_kind = "rate_limit" if ("429" in text or "rate" in lowered or "quota" in lowered) else "crash"
+                self.detail = "Límite de uso del proveedor" if self.error_kind == "rate_limit" else text[:120]
+            elif stop == "aborted":
+                self.status, self.error_kind, self.task, self.detail = Status.paused, None, "", "Interrumpido"
+            elif calls and stop != "stop":
+                self.status, self.error_kind = Status.working, None
+                self.task = ", ".join(str(c.get("name", "")) for c in calls[:2])
+                last = calls[-1]
+                args = last.get("arguments") if isinstance(last.get("arguments"), dict) else {}
+                intent = str(last.get("intent") or args.get("i") or "")
+                self.detail = intent[:160]
+                for call in calls:
+                    call_args = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+                    label = str(call.get("intent") or call_args.get("i") or "")
+                    self.logs.append(("info", f"{call.get('name', '?')}: {label}".rstrip(": ")))
+            else:
+                self._finish_turn()
+                text = " ".join(
+                    str(c.get("text", "")) for c in message.get("content", []) if isinstance(c, dict) and c.get("type") == "text"
+                ).strip()
+                if text:
+                    self.logs.append(("info", f"Respuesta: {text[:200]}"))
+
+    # -- public ---------------------------------------------------------------------
+
+    def advance(self) -> Update:
+        for line in self._lines():
+            if not line.strip():
+                continue
+            try:
+                self._handle(line)
+            except (ValueError, AttributeError, TypeError):
+                continue  # a malformed line must never stop the watcher
+        logs = [] if not self.replayed else self.logs
+        self.logs = []
+        self.replayed = True
+        return self.snapshot(logs)
+
+    def snapshot(self, logs: list[tuple[str, str]]) -> Update:
+        status, detail = self.status, self.detail
+        try:
+            quiet_s = time.time() - self.path.stat().st_mtime
+        except OSError:
+            quiet_s = 0
+        if quiet_s > FRESH_S and status != Status.offline:
+            status, detail = Status.offline, "Sesión inactiva"
+        elif status == Status.working and quiet_s > IDLE_AFTER_S:
+            status, detail = Status.paused, "Sin actividad reciente"
+        name = "Sesión principal" if self.is_main else self.path.stem
+        return Update(
+            key=str(self.path),
+            agent_id=MAIN_AGENT_ID if self.is_main else slug(self.path.stem, "run-"),
+            name=name,
+            role="omp main" if self.is_main else (self.definition or "subagent"),
+            model=self.model,
+            status=status,
+            task=self.task,
+            detail=detail,
+            error_kind=self.error_kind if status == Status.error else None,
+            logs=logs,
+            is_main=self.is_main,
+        )
+
+
+class SessionScanner:
+    """Synchronous core of the watcher (runs in a worker thread)."""
+
+    def __init__(self, project: Path, home_agent_dir: Path | None = None) -> None:
+        self.project = project
+        self.home = home_agent_dir or agent_dir()
+        self.cfg = load_model_config(project, self.home)
+        self.sessions_dir: Path | None = None
+        self.current: Path | None = None
+        self.trackers: dict[Path, Tracker] = {}
+
+    def scan(self) -> list[Update]:
+        if self.sessions_dir is None or not self.sessions_dir.is_dir():
+            self.sessions_dir = find_sessions_dir(self.project, self.home)
+        if self.sessions_dir is None:
+            return []
+        newest = newest_session(self.sessions_dir)
+        if newest is None:
+            return []
+        updates: list[Update] = []
+        if newest != self.current:
+            # New session: previous sub-agent instances are over.
+            for tracker in self.trackers.values():
+                if not tracker.is_main:
+                    old = tracker.snapshot([])
+                    old.status, old.task, old.detail, old.error_kind = Status.offline, "", "Sesión anterior", None
+                    updates.append(old)
+            self.current = newest
+            self.trackers = {}
+        files = [(newest, True)]
+        children = newest.with_suffix("")
+        if children.is_dir():
+            files += [(p, False) for p in sorted(children.glob("*.jsonl"))]
+        for path, is_main in files:
+            tracker = self.trackers.get(path)
+            if tracker is None and not is_main and _quiet_for(path) > FRESH_S:
+                continue  # a long-finished subagent of this session is not worth a cubicle
+            if tracker is None:
+                tracker = self.trackers[path] = Tracker(path, is_main, self.cfg.roles.get("default") if is_main else None)
+            updates.append(tracker.advance())
+        return updates
+
+
+class OmpWatcher:
+    """Pushes session activity of one project into the hub."""
+
+    def __init__(self, hub: Any, project: Path, poll_s: float = 2.0, home_agent_dir: Path | None = None) -> None:
+        self.hub = hub
+        self.poll_s = poll_s
+        self.scanner = SessionScanner(project, home_agent_dir)
+        self._last: dict[str, tuple] = {}
+
+    async def run(self) -> None:
+        while True:
+            try:
+                updates = await asyncio.to_thread(self.scanner.scan)
+                for update in updates:
+                    await self.apply(update)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the watcher must survive odd files
+                await self.hub.log(None, "error", f"omp watcher: {exc}")
+                await asyncio.sleep(self.poll_s * 5)
+            await asyncio.sleep(self.poll_s)
+
+    async def apply(self, update: Update) -> None:
+        hub = self.hub
+        if update.agent_id not in hub.agents:
+            await hub.upsert_agent(update.agent_id, name=update.name, role=update.role, model=update.model)
+        else:
+            agent = hub.agents[update.agent_id]
+            if agent.model != update.model and update.model:
+                await hub.upsert_agent(update.agent_id, model=update.model)
+            if update.role and agent.role != update.role and not update.is_main:
+                await hub.upsert_agent(update.agent_id, role=update.role)
+        for level, message in update.logs:
+            await hub.log(update.agent_id, level, message)
+        state = (update.status, update.task, update.detail, update.error_kind)
+        if self._last.get(update.key) != state:
+            self._last[update.key] = state
+            await hub.set_status(
+                update.agent_id, update.status, task=update.task, detail=update.detail, error_kind=update.error_kind
+            )

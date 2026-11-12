@@ -29,6 +29,7 @@ class AgentState(BaseModel):
     id: str = Field(pattern=AGENT_ID_PATTERN)
     name: str
     role: str = ""
+    model: str | None = None
     avatar: int | None = Field(default=None, ge=0, le=3)
     desk: int = 0
     source: Literal["config", "runtime"] = "runtime"
@@ -69,6 +70,7 @@ class AgentUpsert(BaseModel):
     id: str = Field(pattern=AGENT_ID_PATTERN)
     name: str | None = None
     role: str | None = None
+    model: str | None = None
     avatar: int | None = Field(default=None, ge=0, le=3)
     heartbeat_interval_s: float | None = Field(default=None, gt=0)
 

@@ -18,7 +18,8 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_serve = sub.add_parser("serve", help="run the hub + web UI")
-    p_serve.add_argument("--config", help="path to agents.yaml")
+    p_serve.add_argument("--config", help="path to agents.yaml (omit to use the project's omp agents)")
+    p_serve.add_argument("--project", help="project directory whose omp agents/sessions are shown (default: current directory)")
     p_serve.add_argument("--host")
     p_serve.add_argument("--port", type=int)
 
@@ -37,7 +38,7 @@ def main(argv: list[str] | None = None) -> None:
         from .config import load_settings
         from .server import create_app
 
-        settings = load_settings(args.config)
+        settings = load_settings(args.config, args.project)
         if args.host:
             settings.server.host = args.host
         if args.port:

@@ -12,6 +12,10 @@ def load_agents(settings: Settings) -> list[AgentState]:
     # INTEGRATION POINT: replace this function to load agents from another source
     # (another file, a GET to your own backend, a scan of Open Interpreter
     # profiles...). It only has to return the same list of AgentState.
+    if settings.agents_source == "omp" and settings.project is not None:
+        from .omp_source import discover_roster
+
+        return discover_roster(settings.project)
     agents: list[AgentState] = []
     seen: set[str] = set()
     for index, raw in enumerate(settings.agents_raw):

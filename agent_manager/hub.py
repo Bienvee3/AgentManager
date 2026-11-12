@@ -114,6 +114,7 @@ class Hub:
         role: str | None = None,
         avatar: int | None = None,
         heartbeat_interval_s: float | None = None,
+        model: str | None = None,
     ) -> AgentState:
         agent = self.agents.get(agent_id)
         if agent is None:
@@ -123,6 +124,7 @@ class Hub:
                 name=name or agent_id,
                 role=role or "",
                 avatar=avatar,
+                model=model,
                 desk=desk,
                 source="runtime",
                 status=Status.idle,
@@ -140,6 +142,8 @@ class Hub:
                 agent.avatar = avatar
             if heartbeat_interval_s is not None:
                 agent.heartbeat_interval_s = heartbeat_interval_s
+            if model is not None:
+                agent.model = model
             self._touch(agent)
             if agent.status == Status.offline:
                 # A registration means the agent is alive.

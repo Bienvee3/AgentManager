@@ -46,11 +46,17 @@ def create_app(settings: Settings) -> FastAPI:
         hub = Hub(settings, load_agents(settings))
         app.state.hub = hub
         monitor = asyncio.create_task(hub.run_stale_monitor())
+        tasks = [monitor]
+        if settings.project is not None:
+            from .omp_source import OmpWatcher
+
+            tasks.append(asyncio.create_task(OmpWatcher(hub, settings.project).run()))
         try:
             yield
         finally:
-            monitor.cancel()
-            await asyncio.gather(monitor, return_exceptions=True)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             await hub.shutdown()
 
     app = FastAPI(title="Agent Manager", lifespan=lifespan)
@@ -89,7 +95,7 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post("/api/agents", response_model=AgentState)
     async def upsert_agent(request: Request, body: AgentUpsert):
         return await hub_of(request).upsert_agent(
-            body.id, body.name, body.role, body.avatar, body.heartbeat_interval_s
+            body.id, body.name, body.role, body.avatar, body.heartbeat_interval_s, model=body.model
         )
 
     @app.post("/api/agents/{agent_id}/status", response_model=AgentState)
