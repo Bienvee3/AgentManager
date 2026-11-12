@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AGENT MANAGER</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&amp;family=VT323&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/pixel.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>AGENT MANAGER</h1>
+    <div class="conn-wrap">
+      <span id="conn" class="led led-off" title="Manager desconectado"></span>
+      <span id="conn-text">OFFLINE</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section id="office" class="office" aria-label="Oficina"></section>
+    <aside id="dashboard" class="hud-panel" aria-label="Estado del sistema"></aside>
+  </main>
+
+  <section id="terminal" class="hud-terminal" aria-label="Terminal de logs">
+    <div class="terminal-bar">
+      <span class="terminal-title">TERMINAL</span>
+      <label class="terminal-ctl">
+        <span>FILTRO</span>
+        <select id="log-filter">
+          <option value="">Todos</option>
+        </select>
+      </label>
+      <label class="terminal-ctl">
+        <input type="checkbox" id="autoscroll" checked>
+        <span>AUTOSCROLL</span>
+      </label>
+    </div>
+    <ol id="log-lines" class="log-lines"></ol>
+  </section>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

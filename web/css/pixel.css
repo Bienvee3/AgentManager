@@ -1,0 +1,691 @@
+/* ---------- Variables ---------- */
+:root {
+  --px: 4px;
+  --ok: #3ddc84;
+  --err: #ff4d4d;
+  --warn: #ffd23f;
+  --hitl: #ff8c1a;
+  --idle: #8d99ae;
+  --off: #4a4e69;
+  --ink: #1a1a2e;
+  --font-title: "Press Start 2P", monospace;
+  --font-term: "VT323", monospace;
+}
+
+* {
+  box-sizing: border-box;
+  image-rendering: pixelated;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  color: #edf2f4;
+  font-family: var(--font-title);
+  font-size: 10px;
+  line-height: 1.6;
+  /* Floor: 32px checkerboard tiles (2x2 tiles per 64px period). */
+  background: repeating-conic-gradient(#2b2d42 0% 25%, #30334f 0% 50%) 0 0 / 64px 64px;
+}
+
+/* ---------- Top bar ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: var(--ink);
+  border-bottom: var(--px) solid #000;
+  box-shadow: 0 var(--px) 0 var(--off);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 2px;
+  color: var(--warn);
+  text-shadow: 2px 2px 0 #000;
+}
+
+.conn-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 10px;
+}
+
+.led {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: var(--px) solid #000;
+  background: var(--off);
+}
+
+.led-on {
+  background: var(--ok);
+  box-shadow: 0 0 0 2px #1f6f3f;
+}
+
+.led-off {
+  background: var(--err);
+  animation: blink 0.8s steps(2) infinite;
+}
+
+/* ---------- Layout ---------- */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 32px;
+  align-items: start;
+  flex: 1;
+  padding: 32px 24px;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------- Office ---------- */
+.office {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 32px;
+  align-items: start;
+}
+
+.office .empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+  color: var(--idle);
+  background: var(--ink);
+  border: var(--px) dashed var(--off);
+}
+
+/* Tone helpers: --tone drives tag colour, --screen the monitor glass. */
+.tone-ok {
+  --tone: var(--ok);
+  --screen: #1f6f3f;
+}
+.tone-err {
+  --tone: var(--err);
+  --screen: #7a1010;
+}
+.tone-warn {
+  --tone: var(--warn);
+  --screen: #7a5a10;
+}
+.tone-hitl {
+  --tone: var(--hitl);
+  --screen: #7a5a10;
+}
+.tone-idle {
+  --tone: var(--idle);
+  --screen: #20232a;
+}
+.tone-off {
+  --tone: var(--off);
+  --screen: #20232a;
+}
+
+/* Cubicle: partition walls with stepped shadow. */
+.cubicle {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 12px 12px;
+  background: #3d405b;
+  border: var(--px) solid #8d99ae;
+  box-shadow:
+    var(--px) var(--px) 0 #5c6378,
+    calc(var(--px) * 2) calc(var(--px) * 2) 0 #2b2d42;
+}
+
+.cubicle.status-waiting_approval {
+  animation: pulse 1s steps(2) infinite;
+}
+
+.cubicle.status-offline {
+  filter: grayscale(1) brightness(0.6);
+}
+
+.cubicle.flash {
+  outline: var(--px) solid #fff;
+  outline-offset: 4px;
+}
+
+/* Status tag floating over the agent. */
+.status-tag {
+  position: relative;
+  max-width: 100%;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  text-align: center;
+  color: #10121a;
+  background: var(--tone, var(--idle));
+  border: var(--px) solid #000;
+  box-shadow: var(--px) var(--px) 0 #000;
+}
+
+.tag-main {
+  display: block;
+  font-size: 8px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.tag-detail {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--font-term);
+  font-size: 16px;
+  line-height: 1;
+  overflow-wrap: anywhere;
+  opacity: 0.85;
+}
+
+/* Arrow built from two stepped pseudo-elements (outline + fill). */
+.status-tag::before,
+.status-tag::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+}
+
+.status-tag::before {
+  width: 24px;
+  height: 12px;
+  margin-left: -12px;
+  background: #000;
+  clip-path: polygon(0 0, 100% 0, 100% 33.33%, 83.33% 33.33%, 83.33% 66.66%, 66.66% 66.66%, 66.66% 100%, 33.33% 100%, 33.33% 66.66%, 16.66% 66.66%, 16.66% 33.33%, 0 33.33%);
+}
+
+.status-tag::after {
+  width: 16px;
+  height: 8px;
+  margin-left: -8px;
+  margin-top: -4px;
+  background: var(--tone, var(--idle));
+  clip-path: polygon(0 0, 100% 0, 100% 50%, 75% 50%, 75% 100%, 25% 100%, 25% 50%, 0 50%);
+}
+
+.status-error .status-tag {
+  animation: blink 0.8s steps(2) infinite;
+}
+
+/* Scene: agent beside the desk monitor. */
+.scene {
+  position: relative;
+  width: 200px;
+  height: 140px;
+  margin-top: 8px;
+}
+
+.agent-sprite {
+  position: absolute;
+  left: 28px;
+  top: 16px;
+  width: 64px;
+  height: 64px;
+  z-index: 1;
+}
+
+.desk {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 60px;
+  z-index: 2;
+  background: #8b5a2b;
+  border: var(--px) solid #5c3a1a;
+}
+
+.monitor {
+  position: absolute;
+  right: 28px;
+  bottom: 52px;
+  width: 64px;
+  height: 56px;
+  z-index: 3;
+}
+
+.sprite {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.scr {
+  fill: var(--screen, #20232a);
+}
+
+.ln {
+  transform-box: fill-box;
+  transform-origin: left center;
+}
+
+.status-working .agent-sprite {
+  animation: bob 0.6s steps(2) infinite;
+}
+
+.status-working .ln {
+  animation: type 1.2s steps(4) infinite;
+}
+
+.status-error .scr {
+  animation: blink 0.8s steps(2) infinite;
+}
+
+/* Nameplate */
+.nameplate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 8px;
+  text-align: center;
+  background: #d9c79a;
+  color: #2b1d0e;
+  border: var(--px) solid #5c3a1a;
+}
+
+.np-name {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.np-role {
+  font-family: var(--font-term);
+  font-size: 18px;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- HITL bubble ---------- */
+.hitl-slot {
+  width: 100%;
+}
+
+.hitl-slot:not(:empty) {
+  margin-bottom: 16px;
+}
+
+.hitl-bubble {
+  position: relative;
+  padding: 10px;
+  color: #000;
+  background: #fff;
+  border: var(--px) solid #000;
+  box-shadow: var(--px) var(--px) 0 rgba(0, 0, 0, 0.5);
+  font-size: 8px;
+  line-height: 1.6;
+}
+
+/* Pixelated tail: black staircase with a white staircase on top. */
+.hitl-bubble::before,
+.hitl-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+}
+
+.hitl-bubble::before {
+  width: 32px;
+  height: 16px;
+  margin-left: -16px;
+  background: #000;
+  clip-path: polygon(0 0, 100% 0, 100% 25%, 87.5% 25%, 87.5% 50%, 75% 50%, 75% 75%, 62.5% 75%, 62.5% 100%, 37.5% 100%, 37.5% 75%, 25% 75%, 25% 50%, 12.5% 50%, 12.5% 25%, 0 25%);
+}
+
+.hitl-bubble::after {
+  width: 24px;
+  height: 12px;
+  margin-left: -12px;
+  background: #fff;
+  clip-path: polygon(0 0, 100% 0, 100% 33.33%, 83.33% 33.33%, 83.33% 66.66%, 66.66% 66.66%, 66.66% 100%, 33.33% 100%, 33.33% 66.66%, 16.66% 66.66%, 16.66% 33.33%, 0 33.33%);
+}
+
+.bubble-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bubble-title {
+  color: #c2410c;
+}
+
+.bubble-more {
+  flex: none;
+  padding: 0 4px;
+  color: #fff;
+  background: var(--hitl);
+  border: 2px solid #000;
+}
+
+.hitl-bubble p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.bubble-action {
+  font-size: 9px;
+}
+
+.bubble-kind {
+  display: inline-block;
+  padding: 0 4px;
+  color: #fff;
+  background: #2b2d42;
+  text-transform: uppercase;
+}
+
+.bubble-details {
+  margin-top: 6px;
+}
+
+.bubble-details summary {
+  cursor: pointer;
+}
+
+.bubble-details pre {
+  max-height: 140px;
+  margin: 6px 0 0;
+  padding: 6px;
+  overflow: auto;
+  color: #33ff66;
+  background: #0b0f0b;
+  font-family: var(--font-term);
+  font-size: 16px;
+  line-height: 1.1;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble-expiry {
+  color: #555;
+}
+
+.bubble-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.bubble-buttons button {
+  flex: 1;
+  padding: 8px 4px;
+  color: #000;
+  font-family: var(--font-title);
+  font-size: 8px;
+  cursor: pointer;
+  border: var(--px) solid #000;
+  box-shadow: var(--px) var(--px) 0 #000;
+}
+
+.btn-approve {
+  background: var(--ok);
+}
+
+.btn-reject {
+  background: var(--err);
+}
+
+.bubble-buttons button:active:not(:disabled) {
+  transform: translate(var(--px), var(--px));
+  box-shadow: 0 0 0 #000;
+}
+
+.bubble-buttons button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.hitl-bubble .bubble-error {
+  color: #b00020;
+}
+
+/* ---------- Dashboard ---------- */
+.hud-panel {
+  padding: 16px;
+  color: #cfeedd;
+  background: #0b0f0b;
+  border: var(--px) solid #8d99ae;
+  box-shadow: var(--px) var(--px) 0 #000;
+}
+
+.hud-title {
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: var(--ok);
+}
+
+.hud-subtitle {
+  margin: 20px 0 8px;
+  font-size: 9px;
+  color: var(--hitl);
+}
+
+.hud-rows {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.hud-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 2px dotted #2b2d42;
+  font-size: 8px;
+}
+
+.hud-label {
+  color: var(--idle);
+}
+
+.hud-value {
+  margin: 0;
+  color: #fff;
+}
+
+.hud-value.is-online {
+  color: var(--ok);
+}
+
+.hud-value.is-offline {
+  color: var(--err);
+}
+
+.pending-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pending-empty {
+  color: var(--off);
+  font-size: 8px;
+}
+
+.pending-item {
+  width: 100%;
+  padding: 6px;
+  color: var(--hitl);
+  background: transparent;
+  border: 2px solid var(--hitl);
+  font-family: var(--font-term);
+  font-size: 16px;
+  line-height: 1.1;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.pending-item:hover {
+  color: #000;
+  background: var(--hitl);
+}
+
+/* ---------- Terminal HUD ---------- */
+.hud-terminal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 260px;
+  margin: 0 24px 24px;
+  color: #33ff66;
+  background: #0b0f0b;
+  border: var(--px) solid #8d99ae;
+  box-shadow: var(--px) var(--px) 0 #000;
+}
+
+/* Scanlines */
+.hud-terminal::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.28) 0, rgba(0, 0, 0, 0.28) 1px, transparent 1px, transparent 3px);
+}
+
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 6px 12px;
+  background: #121812;
+  border-bottom: 2px solid #1d3a24;
+  font-size: 8px;
+}
+
+.terminal-title {
+  margin-right: auto;
+  color: var(--ok);
+}
+
+.terminal-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--idle);
+}
+
+.terminal-ctl select {
+  color: #33ff66;
+  background: #0b0f0b;
+  border: 2px solid #1d3a24;
+  font-family: var(--font-term);
+  font-size: 16px;
+}
+
+.log-lines {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 8px 12px;
+  overflow-y: auto;
+  list-style: none;
+  font-family: var(--font-term);
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.log-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.lvl-info {
+  color: #33ff66;
+}
+.lvl-warn {
+  color: var(--warn);
+}
+.lvl-error {
+  color: var(--err);
+}
+.lvl-hitl {
+  color: var(--hitl);
+}
+.lvl-system {
+  color: #4cc9f0;
+}
+
+/* ---------- Animations ---------- */
+@keyframes bob {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes type {
+  from {
+    transform: scaleX(0.15);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  49% {
+    border-color: var(--hitl);
+    box-shadow:
+      var(--px) var(--px) 0 var(--hitl),
+      calc(var(--px) * 2) calc(var(--px) * 2) 0 #7a4410;
+  }
+  50%,
+  100% {
+    border-color: #8d99ae;
+    box-shadow:
+      var(--px) var(--px) 0 #5c6378,
+      calc(var(--px) * 2) calc(var(--px) * 2) 0 #2b2d42;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-working .agent-sprite,
+  .status-working .ln,
+  .status-error .scr,
+  .status-error .status-tag,
+  .cubicle.status-waiting_approval,
+  .led-off {
+    animation: none;
+  }
+}
