@@ -1,0 +1,95 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/Bienve/dev/MyProyects/AgentManager/integrations/openinterpreter_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/Bienve/dev/MyProyects/AgentManager/integrations/openinterpreter_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/Bienve/dev/MyProyects/AgentManager/integrations/openinterpreter_hook.py",
+            "timeout": 900,
+            "statusMessage": "Esperando aprobación en Agent Manager"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/Bienve/dev/MyProyects/AgentManager/integrations/openinterpreter_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/Bienve/dev/MyProyects/AgentManager/integrations/openinterpreter_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/Bienve/dev/MyProyects/AgentManager/integrations/openinterpreter_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/Bienve/dev/MyProyects/AgentManager/integrations/openinterpreter_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/Bienve/dev/MyProyects/AgentManager/integrations/openinterpreter_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
