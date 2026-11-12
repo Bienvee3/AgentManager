@@ -1,0 +1,17 @@
+server: {host: 127.0.0.1, port: 8765}
+hitl:
+  approval_timeout_s: 840          # expires -> status "expired" = rejection
+  critical_tools: '^(apply_patch|Edit|Write|MultiEdit)$'
+  critical_command_patterns:
+    - '\bgit\s+push\b'
+    - '\b(deploy|kubectl|terraform\s+apply|helm\s+(install|upgrade))\b'
+    - '\b(rm|del|rmdir|rd|Remove-Item)\b'
+    - '\b(pip|npm|pnpm|yarn)\s+(install|uninstall|publish)\b'
+    - '(curl|wget|Invoke-WebRequest|iwr)\b.*\|\s*(sh|bash|iex|python)'
+    - '\b(schtasks|Set-ExecutionPolicy)\b|\breg\s+(add|delete)\b'
+monitor: {stale_check_interval_s: 5, log_buffer: 500}
+agents:
+  - {id: refactor-bot, name: Refactor-Bot, role: Code refactor, avatar: 0}
+  - {id: data-cruncher, name: Data-Cruncher, role: Data pipeline, avatar: 1}
+  - {id: deploy-agent, name: Deploy-Agent, role: Releases, avatar: 2}
+  - {id: qa-tester, name: QA-Tester, role: Testing, avatar: 3}
