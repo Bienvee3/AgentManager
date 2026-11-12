@@ -42,9 +42,10 @@ Tips:
 
 ## What you see for a project (omp)
 
-- **Idle desks**: the agents omp offers in that project. Looked up like omp does: `<project>\.omp\agents\*.md`, then `~\.omp\agent\agents\*.md` (or `$PI_CODING_AGENT_DIR`), then the bundled `task`, `scout`, `reviewer`, `security-reviewer`, `sonic`. First name wins, so a project agent overrides a user agent. Each desk shows its model, resolved through `modelRoles` in omp's `config.yml` (what `/model` edits) and `task.agentModelOverrides`.
-- **Live status** (read-only): the manager follows the project's newest omp session under `~\.omp\agent\sessions\`. `Sesión principal` is the main agent; every running subagent gets its own cubicle (`run-<name>`) showing the current tool and intent. Only model, stop reason, tool name and intent are read; usage/cost data in those files is ignored.
-- Sessions untouched for more than 1 h show as offline. With two omp windows on the same project, only the newest session is followed.
+- **One desk per agent, all shown at launch**: the main session plus every agent omp offers in that project, looked up like omp does: `<project>\.omp\agents\*.md`, then `~\.omp\agent\agents\*.md` (or `$PI_CODING_AGENT_DIR`), then the bundled `task`, `scout`, `reviewer`, `security-reviewer`, `sonic`. First name wins, so a project agent overrides a user agent. Each desk shows its model, resolved through `modelRoles` in omp's `config.yml` (what `/model` edits) and `task.agentModelOverrides`.
+- **Desks light up when their agent works** (read-only): the manager follows the project's newest omp session under `~\.omp\agent\sessions\`. When a subagent runs, its desk switches to `TRABAJANDO` with the current tool and intent; `ERROR: RATE LIMIT` on provider limits; `INACTIVO` / "Tarea completada" when it finishes. Several instances of the same agent (e.g. 3 parallel `task`) share one desk (`+N en paralelo`).
+- **No cubicles are ever created from sessions.** To get a new desk, add an agent (`<project>\.omp\agents\name.md`) or register one through the API; a running subagent whose definition is not on the roster is ignored.
+- Only model, stop reason, tool name and intent are read; usage/cost data in the session files is ignored. Sessions untouched for more than 1 h show as offline; with two omp windows on the same project, only the newest session is followed.
 - omp's own approvals are **not** intercepted (nothing to hook into); approve/reject buttons work for agents that call the Manager API (below).
 
 Fixed agents instead: put an `agents.yaml` (see `agents.example.yaml`) in the current directory, or pass `--config` / set `AGENT_MANAGER_CONFIG`. Then agents come from that file, and the omp live view runs only if you also pass `--project`.

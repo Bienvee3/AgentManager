@@ -275,6 +275,8 @@ class Update:
     error_kind: str | None
     logs: list[tuple[str, str]] = field(default_factory=list)
     is_main: bool = False
+    definition: str = ""  # agent definition name (subagents only)
+    activity: float = 0.0  # file mtime, to pick the most recent instance
 
 
 class Tracker:
@@ -403,19 +405,19 @@ class Tracker:
     def snapshot(self, logs: list[tuple[str, str]]) -> Update:
         status, detail = self.status, self.detail
         try:
-            quiet_s = time.time() - self.path.stat().st_mtime
+            mtime = self.path.stat().st_mtime
         except OSError:
-            quiet_s = 0
+            mtime = time.time()
+        quiet_s = time.time() - mtime
         if quiet_s > FRESH_S and status != Status.offline:
             status, detail = Status.offline, "Sesión inactiva"
         elif status == Status.working and quiet_s > IDLE_AFTER_S:
             status, detail = Status.paused, "Sin actividad reciente"
-        name = "Sesión principal" if self.is_main else self.path.stem
         return Update(
             key=str(self.path),
-            agent_id=MAIN_AGENT_ID if self.is_main else slug(self.path.stem, "run-"),
-            name=name,
-            role="omp main" if self.is_main else (self.definition or "subagent"),
+            agent_id=MAIN_AGENT_ID if self.is_main else (slug(self.definition) if self.definition else ""),
+            name="Sesión principal" if self.is_main else self.path.stem,
+            role="omp main" if self.is_main else self.definition,
             model=self.model,
             status=status,
             task=self.task,
@@ -423,6 +425,8 @@ class Tracker:
             error_kind=self.error_kind if status == Status.error else None,
             logs=logs,
             is_main=self.is_main,
+            definition=self.definition,
+            activity=mtime,
         )
 
 
@@ -447,13 +451,7 @@ class SessionScanner:
             return []
         updates: list[Update] = []
         if newest != self.current:
-            # New session: previous sub-agent instances are over.
-            for tracker in self.trackers.values():
-                if not tracker.is_main:
-                    old = tracker.snapshot([])
-                    old.status, old.task, old.detail, old.error_kind = Status.offline, "", "Sesión anterior", None
-                    updates.append(old)
-            self.current = newest
+            self.current = newest  # new session: instances of the previous one are over
             self.trackers = {}
         files = [(newest, True)]
         children = newest.with_suffix("")
@@ -462,11 +460,29 @@ class SessionScanner:
         for path, is_main in files:
             tracker = self.trackers.get(path)
             if tracker is None and not is_main and _quiet_for(path) > FRESH_S:
-                continue  # a long-finished subagent of this session is not worth a cubicle
+                continue  # a long-finished subagent of this session is not worth tracking
             if tracker is None:
                 tracker = self.trackers[path] = Tracker(path, is_main, self.cfg.roles.get("default") if is_main else None)
             updates.append(tracker.advance())
         return updates
+
+
+_RANK = {Status.working: 4, Status.error: 3, Status.paused: 2, Status.idle: 1, Status.offline: 0}
+
+
+def aggregate(group: list[Update]) -> tuple[Status, str, str, str | None]:
+    """Fold the running instances of one agent definition into its desk's state.
+
+    working beats error beats paused beats idle; ties go to the most recently active file.
+    """
+    best = max(group, key=lambda u: (_RANK.get(u.status, 1), u.activity))
+    if best.status == Status.offline:  # long-quiet instances: the desk is simply available
+        return Status.idle, "", "Disponible", None
+    detail = best.detail
+    parallel = sum(1 for u in group if u.status == Status.working) - 1
+    if best.status == Status.working and parallel > 0:
+        detail = f"{detail} (+{parallel} en paralelo)".strip()
+    return best.status, best.task, detail, best.error_kind
 
 
 class OmpWatcher:
@@ -477,13 +493,12 @@ class OmpWatcher:
         self.poll_s = poll_s
         self.scanner = SessionScanner(project, home_agent_dir)
         self._last: dict[str, tuple] = {}
+        self._driven: set[str] = set()  # roster desks currently driven by running instances
 
     async def run(self) -> None:
         while True:
             try:
-                updates = await asyncio.to_thread(self.scanner.scan)
-                for update in updates:
-                    await self.apply(update)
+                await self.apply_all(await asyncio.to_thread(self.scanner.scan))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - the watcher must survive odd files
@@ -491,21 +506,33 @@ class OmpWatcher:
                 await asyncio.sleep(self.poll_s * 5)
             await asyncio.sleep(self.poll_s)
 
-    async def apply(self, update: Update) -> None:
+    async def apply_all(self, updates: list[Update]) -> None:
+        """Light up roster desks. Nothing is ever created: instances whose definition
+        is not already a config/roster agent are ignored."""
         hub = self.hub
-        if update.agent_id not in hub.agents:
-            await hub.upsert_agent(update.agent_id, name=update.name, role=update.role, model=update.model)
-        else:
-            agent = hub.agents[update.agent_id]
-            if agent.model != update.model and update.model:
-                await hub.upsert_agent(update.agent_id, model=update.model)
-            if update.role and agent.role != update.role and not update.is_main:
-                await hub.upsert_agent(update.agent_id, role=update.role)
-        for level, message in update.logs:
-            await hub.log(update.agent_id, level, message)
-        state = (update.status, update.task, update.detail, update.error_kind)
-        if self._last.get(update.key) != state:
-            self._last[update.key] = state
-            await hub.set_status(
-                update.agent_id, update.status, task=update.task, detail=update.detail, error_kind=update.error_kind
-            )
+        groups: dict[str, list[Update]] = {}
+        for update in updates:
+            if update.is_main:
+                agent = hub.agents.get(MAIN_AGENT_ID)
+                if agent is not None and agent.source == "config":
+                    if update.model and agent.model != update.model:
+                        await hub.upsert_agent(MAIN_AGENT_ID, model=update.model)
+                    await self._push(MAIN_AGENT_ID, update.status, update.task, update.detail, update.error_kind)
+                continue
+            agent = hub.agents.get(update.agent_id) if update.agent_id else None
+            if agent is None or agent.source != "config":
+                continue
+            groups.setdefault(update.agent_id, []).append(update)
+            for level, message in update.logs:
+                await hub.log(update.agent_id, level, f"{update.name}: {message}")
+        for agent_id, group in groups.items():
+            await self._push(agent_id, *aggregate(group))
+        for agent_id in self._driven - groups.keys():  # no running instance any more
+            await self._push(agent_id, Status.idle, "", "Disponible", None)
+        self._driven = set(groups)
+
+    async def _push(self, agent_id: str, status: Status, task: str, detail: str, error_kind: str | None) -> None:
+        state = (status, task, detail, error_kind)
+        if self._last.get(agent_id) != state:
+            self._last[agent_id] = state
+            await self.hub.set_status(agent_id, status, task=task, detail=detail, error_kind=error_kind)
