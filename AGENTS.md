@@ -3,7 +3,7 @@
 Spec: `../AGENT_MANAGER_PLAN.md`.
 
 ## Stack
-Python 3.11, FastAPI + uvicorn (hub in memory, asyncio), Rich TUI, vanilla ES-module web UI (no npm/build). `client.py` and `integrations/*` are stdlib-only and must not import the package.
+Python 3.11, FastAPI + uvicorn (hub in memory, asyncio), Rich TUI, vanilla ES-module web UI with vendored Three.js (no npm/build). `client.py` and `integrations/*` are stdlib-only and must not import the package.
 
 ## Commands (always `python -m`; `pip.exe` is blocked on this machine)
 - Install: `.venv\Scripts\python -m pip install -r requirements-dev.txt`

@@ -1,8 +1,8 @@
 # Agent Manager
 
-Local dashboard for your AI agents: a pixel-art office in the browser (one cubicle per agent, status tags, approve/reject bubbles, log terminal) plus a terminal UI.
+Local dashboard for your AI agents: a **3D voxel office** in the browser where agents walk, sit at their desks and type, with status tags, approve/reject bubbles and a log terminal, plus a terminal UI.
 
-For **omp (oh-my-pi)** it shows the agents of whichever project you point it at, with their models and live status. Open Interpreter and your own scripts can report to it too. No cost/token metrics anywhere.
+For **omp (oh-my-pi)** it follows every project you work on: each active project gets its own room with that project's agents and models, and a door/tab to slide between rooms. Open Interpreter and your own scripts can report to it too. No cost/token metrics anywhere.
 
 ## Quick start
 
@@ -16,44 +16,42 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -e .
 ```
 
-**2. Launch it for a project** (from any directory):
+**2. Launch** (from any directory):
 
 ```powershell
-<path-to-AgentManager>\.venv\Scripts\python -m agent_manager serve --project <path-to-your-project> --port 8766
+<path-to-AgentManager>\.venv\Scripts\python -m agent_manager serve --all
 ```
 
-Example for the author's machine:
+On the author's machine: `C:\Users\Bienve\dev\MyProyects\AgentManager\.venv\Scripts\python -m agent_manager serve --all`
 
-```powershell
-C:\Users\Bienve\dev\MyProyects\AgentManager\.venv\Scripts\python -m agent_manager serve --project C:\Users\Bienve\dev\Java\SportsLeagueManagement --port 8766
-```
+**3. Open** `http://127.0.0.1:8765/`. Stop with `Ctrl+C`.
 
-**3. Open** `http://127.0.0.1:8766/`. Stop with `Ctrl+C`.
+That is all: leave it running and start omp in any project. Within ~10 s that project's room opens and its agents appear at their desks.
 
-Tips:
-- Already inside the project folder? Omit `--project`; the current directory is used.
-- One project per manager. To watch several at once, use a different `--port` for each.
-- Add `--port` only if 8765 (the default) is taken.
-- Optional terminal UI, in another terminal: `.venv\Scripts\python -m agent_manager watch --url http://127.0.0.1:8766` (`↑/↓` select, `A` approve, `R` reject, `Q` quit).
-- Want a one-word launcher? Add this to your PowerShell profile (`notepad $PROFILE`), then run `am` inside any project:
+**Always on (Windows)**: `.venv\Scripts\python -m agent_manager install-autostart` makes it start minimized every time you log in (`uninstall-autostart` removes it). Then just keep `http://127.0.0.1:8765/` in a tab.
+
+Other ways to launch:
+- One project only: `serve --project <path-to-project>` (always has its room, even without an omp session). Inside the project folder you can omit `--project`.
+- Port 8765 taken? Add `--port 8766`. Optional terminal UI in another terminal: `.venv\Scripts\python -m agent_manager watch` (`↑/↓` select, `A` approve, `R` reject, `Q` quit).
+- One-word launcher: add this to your PowerShell profile (`notepad $PROFILE`) and run `am`:
   ```powershell
-  function am { & "C:\Users\Bienve\dev\MyProyects\AgentManager\.venv\Scripts\python" -m agent_manager serve --project (Get-Location) @args }
+  function am { & "C:\Users\Bienve\dev\MyProyects\AgentManager\.venv\Scripts\python" -m agent_manager serve --all @args }
   ```
 
-## What you see for a project (omp)
+## How the office works
 
-- **One desk per agent, all shown at launch**: the main session plus every agent omp offers in that project, looked up like omp does: `<project>\.omp\agents\*.md`, then `~\.omp\agent\agents\*.md` (or `$PI_CODING_AGENT_DIR`), then the bundled `task`, `scout`, `reviewer`, `security-reviewer`, `sonic`. First name wins, so a project agent overrides a user agent. Each desk shows its model, resolved through `modelRoles` in omp's `config.yml` (what `/model` edits) and `task.agentModelOverrides`.
-- **Desks light up when their agent works** (read-only): the manager follows the project's newest omp session under `~\.omp\agent\sessions\`. When a subagent runs, its desk switches to `TRABAJANDO` with the current tool and intent; `ERROR: RATE LIMIT` on provider limits; `INACTIVO` / "Tarea completada" when it finishes. Several instances of the same agent (e.g. 3 parallel `task`) share one desk (`+N en paralelo`).
-- **No cubicles are ever created from sessions.** To get a new desk, add an agent (`<project>\.omp\agents\name.md`) or register one through the API; a running subagent whose definition is not on the roster is ignored.
-- Only model, stop reason, tool name and intent are read; usage/cost data in the session files is ignored. Sessions untouched for more than 1 h show as offline; with two omp windows on the same project, only the newest session is followed.
-- omp's own approvals are **not** intercepted (nothing to hook into); approve/reject buttons work for agents that call the Manager API (below).
+- **Rooms**: the first active project takes the main office (your avatar `TÚ` sits at the boss desk); every further concurrent project gets its own room. Click a door, a tab in the top bar, or press `←` / `→` to slide between rooms. A project is active while its omp session has had activity in the last 15 min and has not exited; its room closes 60 s after that stops.
+- **Desks**: each room holds the main session plus every agent omp offers in that project, looked up like omp does: `<project>\.omp\agents\*.md`, then `~\.omp\agent\agents\*.md` (or `$PI_CODING_AGENT_DIR`), then the bundled `task`, `scout`, `reviewer`, `security-reviewer`, `sonic`. First name wins, so a project agent overrides a user agent. Each agent shows its model, resolved through `modelRoles` in omp's `config.yml` (what `/model` edits) and `task.agentModelOverrides`. Add an agent file and its desk appears within ~10 s.
+- **Behaviour** (read-only, from the omp session files): working agents sit and type with a `TRABAJANDO` tag (current tool and intent), errors show `ERROR: RATE LIMIT`, idle agents wander to the lounge (hover a name to see its status), agents waiting for approval stand and wave with the approve/reject bubble. Several instances of one agent (e.g. 3 parallel `task`) share one desk (`+N en paralelo`). Click an agent to see its details in the status panel.
+- **No agents are created from sessions.** A running subagent whose definition is not on the roster is ignored; register extra agents through the API or `agents.yaml`. Agents without a project (API/`agents.yaml`/simulator) sit in the main office.
+- Only model, stop reason, tool name and intent are read from session files; usage/cost data is ignored. omp's own approvals are **not** intercepted (nothing to hook into); approve/reject buttons work for agents that call the Manager API (below). With two omp windows on the same project, only the newest session is followed.
 
-Fixed agents instead: put an `agents.yaml` (see `agents.example.yaml`) in the current directory, or pass `--config` / set `AGENT_MANAGER_CONFIG`. Then agents come from that file, and the omp live view runs only if you also pass `--project`.
+Fixed agents instead: put an `agents.yaml` (see `agents.example.yaml`) in the current directory, or pass `--config` / set `AGENT_MANAGER_CONFIG`; they appear in the main office next to any omp rooms.
 
 ## Demo
 
 ```powershell
-.venv\Scripts\python -m agent_manager serve --port 8765      # terminal 1
+.venv\Scripts\python -m agent_manager serve --all             # terminal 1
 .venv\Scripts\python -m agent_manager simulate --seed 1      # terminal 2: 4 fake agents asking for approvals
 ```
 
@@ -83,8 +81,8 @@ The server listens on `127.0.0.1` only. POSTs require `Content-Type: application
 ```
 
 ```
-agent_manager/  config, models, labels, policy, hub, server, client, tui, simulator, hitl_callbacks, sources, omp_source
+agent_manager/  config, models, labels, policy, hub, server, client, tui, simulator, hitl_callbacks, sources, omp_source, autostart
 integrations/   Open Interpreter hook + classic runner
-web/            vanilla ES modules, no build step
+web/            vanilla ES modules + 3D world (web/js/world), Three.js vendored in web/vendor, no build step
 tests/          pytest
 ```
