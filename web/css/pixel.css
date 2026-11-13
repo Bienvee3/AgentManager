@@ -99,76 +99,168 @@ body {
   }
 }
 
-/* ---------- Office ---------- */
-.office {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 32px;
-  align-items: start;
+/* ---------- 3D world ---------- */
+.world {
+  position: relative;
+  height: 70vh;
+  min-height: 420px;
+  overflow: hidden;
+  background: var(--ink);
+  border: var(--px) solid #8d99ae;
 }
 
-.office .empty {
-  grid-column: 1 / -1;
+.world canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.world .empty {
   margin: 0;
   padding: 24px;
   text-align: center;
   color: var(--idle);
-  background: var(--ink);
-  border: var(--px) dashed var(--off);
 }
 
-/* Tone helpers: --tone drives tag colour, --screen the monitor glass. */
-.tone-ok {
-  --tone: var(--ok);
-  --screen: #1f6f3f;
-}
-.tone-err {
-  --tone: var(--err);
-  --screen: #7a1010;
-}
-.tone-warn {
-  --tone: var(--warn);
-  --screen: #7a5a10;
-}
-.tone-hitl {
-  --tone: var(--hitl);
-  --screen: #7a5a10;
-}
-.tone-idle {
-  --tone: var(--idle);
-  --screen: #20232a;
-}
-.tone-off {
-  --tone: var(--off);
-  --screen: #20232a;
+.world-overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
-/* Cubicle: partition walls with stepped shadow. */
-.cubicle {
-  position: relative;
+.fig-label {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 16px 12px 12px;
-  background: #3d405b;
+  width: max-content;
+  max-width: 130px;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+}
+
+.fig-label .hitl-slot {
+  width: 230px;
+  max-width: none;
+  pointer-events: auto;
+}
+
+.fig-label .hitl-slot:not(:empty) {
+  margin-bottom: 20px;
+}
+
+.fig-label .status-tag {
+  margin-bottom: 8px;
+  padding: 4px 6px;
+  pointer-events: auto;
+}
+
+.fig-label .status-tag.is-clickable {
+  cursor: pointer;
+}
+
+.fig-label .tag-main {
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.fig-label .tag-detail {
+  margin-top: 2px;
+  font-size: 14px;
+}
+
+/* Resting agents crowd the lounge: show just the name until hovered. */
+.fig-label.status-idle .tag-detail,
+.fig-label.status-offline .tag-detail {
+  display: none;
+}
+
+.fig-label.status-idle:hover .tag-detail,
+.fig-label.status-offline:hover .tag-detail {
+  display: block;
+}
+
+.fig-label.status-idle:hover,
+.fig-label.status-offline:hover {
+  z-index: 5;
+}
+
+.door-sign {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 4px 8px;
+  font-family: var(--font-title);
+  font-size: 8px;
+  line-height: 1.4;
+  color: #edf2f4;
+  background: var(--ink);
   border: var(--px) solid #8d99ae;
-  box-shadow:
-    var(--px) var(--px) 0 #5c6378,
-    calc(var(--px) * 2) calc(var(--px) * 2) 0 #2b2d42;
+  box-shadow: var(--px) var(--px) 0 #000;
+  cursor: pointer;
+  pointer-events: auto;
+  white-space: nowrap;
 }
 
-.cubicle.status-waiting_approval {
-  animation: pulse 1s steps(2) infinite;
+.door-sign:hover {
+  border-color: var(--warn);
+  color: var(--warn);
 }
 
-.cubicle.status-offline {
-  filter: grayscale(1) brightness(0.6);
+.room-tabs {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 16px;
 }
 
-.cubicle.flash {
-  outline: var(--px) solid #fff;
-  outline-offset: 4px;
+.room-tab {
+  padding: 6px 10px;
+  font-family: var(--font-title);
+  font-size: 9px;
+  color: #edf2f4;
+  background: var(--ink);
+  border: var(--px) solid var(--off);
+  cursor: pointer;
+}
+
+.room-tab:hover {
+  border-color: #8d99ae;
+}
+
+.room-tab.active {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.hud-agent {
+  margin-bottom: 16px;
+}
+
+/* Tone helpers: --tone drives the tag colour. */
+.tone-ok {
+  --tone: var(--ok);
+}
+.tone-err {
+  --tone: var(--err);
+}
+.tone-warn {
+  --tone: var(--warn);
+}
+.tone-hitl {
+  --tone: var(--hitl);
+}
+.tone-idle {
+  --tone: var(--idle);
+}
+.tone-off {
+  --tone: var(--off);
 }
 
 /* Status tag floating over the agent. */
@@ -229,104 +321,6 @@ body {
 
 .status-error .status-tag {
   animation: blink 0.8s steps(2) infinite;
-}
-
-/* Scene: agent beside the desk monitor. */
-.scene {
-  position: relative;
-  width: 200px;
-  height: 140px;
-  margin-top: 8px;
-}
-
-.agent-sprite {
-  position: absolute;
-  left: 28px;
-  top: 16px;
-  width: 64px;
-  height: 64px;
-  z-index: 1;
-}
-
-.desk {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 60px;
-  z-index: 2;
-  background: #8b5a2b;
-  border: var(--px) solid #5c3a1a;
-}
-
-.monitor {
-  position: absolute;
-  right: 28px;
-  bottom: 52px;
-  width: 64px;
-  height: 56px;
-  z-index: 3;
-}
-
-.sprite {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.scr {
-  fill: var(--screen, #20232a);
-}
-
-.ln {
-  transform-box: fill-box;
-  transform-origin: left center;
-}
-
-.status-working .agent-sprite {
-  animation: bob 0.6s steps(2) infinite;
-}
-
-.status-working .ln {
-  animation: type 1.2s steps(4) infinite;
-}
-
-.status-error .scr {
-  animation: blink 0.8s steps(2) infinite;
-}
-
-/* Nameplate */
-.nameplate {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  padding: 8px;
-  text-align: center;
-  background: #d9c79a;
-  color: #2b1d0e;
-  border: var(--px) solid #5c3a1a;
-}
-
-.np-name {
-  font-size: 10px;
-  overflow-wrap: anywhere;
-}
-
-.np-role {
-  font-family: var(--font-term);
-  font-size: 18px;
-  line-height: 1;
-  overflow-wrap: anywhere;
-}
-
-.np-model {
-  font-family: var(--font-term);
-  font-size: 16px;
-  line-height: 1;
-  color: #6b4f2a;
-  overflow-wrap: anywhere;
 }
 
 /* ---------- HITL bubble ---------- */
@@ -646,53 +640,14 @@ body {
 }
 
 /* ---------- Animations ---------- */
-@keyframes bob {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(-4px);
-  }
-}
-
-@keyframes type {
-  from {
-    transform: scaleX(0.15);
-  }
-  to {
-    transform: scaleX(1);
-  }
-}
-
 @keyframes blink {
   50% {
     opacity: 0.25;
   }
 }
 
-@keyframes pulse {
-  0%,
-  49% {
-    border-color: var(--hitl);
-    box-shadow:
-      var(--px) var(--px) 0 var(--hitl),
-      calc(var(--px) * 2) calc(var(--px) * 2) 0 #7a4410;
-  }
-  50%,
-  100% {
-    border-color: #8d99ae;
-    box-shadow:
-      var(--px) var(--px) 0 #5c6378,
-      calc(var(--px) * 2) calc(var(--px) * 2) 0 #2b2d42;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .status-working .agent-sprite,
-  .status-working .ln,
-  .status-error .scr,
   .status-error .status-tag,
-  .cubicle.status-waiting_approval,
   .led-off {
     animation: none;
   }

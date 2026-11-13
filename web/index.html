@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AGENT MANAGER</title>
+  <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&amp;family=VT323&amp;display=swap" rel="stylesheet">
@@ -12,6 +13,7 @@
 <body>
   <header class="topbar">
     <h1>AGENT MANAGER</h1>
+    <nav id="rooms" class="room-tabs" aria-label="Salas"></nav>
     <div class="conn-wrap">
       <span id="conn" class="led led-off" title="Manager desconectado"></span>
       <span id="conn-text">OFFLINE</span>
@@ -19,7 +21,7 @@
   </header>
 
   <main class="layout">
-    <section id="office" class="office" aria-label="Oficina"></section>
+    <section id="world" class="world" aria-label="Oficina 3D"></section>
     <aside id="dashboard" class="hud-panel" aria-label="Estado del sistema"></aside>
   </main>
 
@@ -40,6 +42,7 @@
     <ol id="log-lines" class="log-lines"></ol>
   </section>
 
+  <script type="importmap">{"imports":{"three":"./vendor/three.module.min.js"}}</script>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

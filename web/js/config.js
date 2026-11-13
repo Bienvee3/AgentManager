@@ -10,8 +10,9 @@ export const WS_URL = MANAGER_URL.replace(/^http/, "ws") + "/ws";
 //   return { agents: [{ id: "my-bot", name: "My Bot", role: "ETL", avatar: 0,
 //                       desk: 0, source: "config", status: "idle", task: "",
 //                       detail: "", error_kind: null, last_seen: null,
-//                       heartbeat_interval_s: null, pending_approvals: 0 }],
-//            approvals: [], logs: [] };
+//                       heartbeat_interval_s: null, pending_approvals: 0,
+//                       project: null }],
+//            projects: [], approvals: [], logs: [] };
 // Live updates still arrive through the WebSocket (see main.js).
 export async function loadInitialState(api) {
   return api.getState();
