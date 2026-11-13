@@ -49,6 +49,7 @@ class Store:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.agents: dict[str, dict] = {}
+        self.projects: dict[str, dict] = {}
         self.approvals: dict[str, dict] = {}  # pending only
         self.logs: list[dict] = []
         self.connected = False
@@ -61,12 +62,19 @@ class Store:
             if etype == "snapshot":
                 data = data or {}
                 self.agents = {a["id"]: a for a in data.get("agents", [])}
+                self.projects = {p["id"]: p for p in data.get("projects", [])}
                 self.approvals = {
                     a["id"]: a for a in data.get("approvals", []) if a.get("status") == "pending"
                 }
                 self.logs = list(data.get("logs", []))[-LOG_CAP:]
             elif etype == "agent" and data:
                 self.agents[data["id"]] = data
+            elif etype == "agent_removed" and data:
+                self.agents.pop(data["id"], None)
+            elif etype == "project" and data:
+                self.projects[data["id"]] = data
+            elif etype == "project_removed" and data:
+                self.projects.pop(data["id"], None)
             elif etype == "approval" and data:
                 if data.get("status") == "pending":
                     self.approvals[data["id"]] = data
@@ -89,6 +97,7 @@ class Store:
         with self._lock:
             return {
                 "agents": copy.deepcopy(self.agents),
+                "projects": copy.deepcopy(self.projects),
                 "approvals": copy.deepcopy(self.approvals),
                 "logs": list(self.logs),
                 "connected": self.connected,
@@ -97,7 +106,12 @@ class Store:
 
 
 def sorted_agents(view: dict) -> list[dict]:
-    return sorted(view["agents"].values(), key=lambda a: (a.get("desk", 0), a.get("name", "")))
+    projects = view.get("projects", {})
+
+    def room(agent: dict) -> int:
+        return projects.get(agent.get("project"), {}).get("room", 0)
+
+    return sorted(view["agents"].values(), key=lambda a: (room(a), a.get("desk", 0), a.get("name", "")))
 
 
 def sorted_approvals(view: dict) -> list[dict]:
@@ -137,7 +151,7 @@ def render_header(view: dict) -> Panel:
     return Panel(text, style="on default")
 
 
-def render_agent(agent: dict, pending: list[dict]) -> Panel:
+def render_agent(agent: dict, pending: list[dict], project_name: str | None = None) -> Panel:
     color = _tone_color(agent)
     lines: list[RenderableType] = [Text(row, style=color) for row in DESK_ART]
     if agent.get("model"):
@@ -148,6 +162,8 @@ def render_agent(agent: dict, pending: list[dict]) -> Panel:
     if pending:
         lines.append(Text(f"⚠ HITL: {pending[0].get('action', '')}", style=labels.TONE_COLORS["hitl"]))
     title = agent.get("name") or agent["id"]
+    if project_name:
+        title = f"{project_name} / {title}"
     if agent.get("role"):
         title = f"{title} · {agent['role']}"
     return Panel(Group(*lines), title=title, border_style=color, width=50)
@@ -158,7 +174,15 @@ def render_agents(view: dict) -> RenderableType:
     if not agents:
         return Panel(Text("SIN AGENTES — configura agents.yaml o registra uno vía API", style="dim"), title="agentes")
     approvals = sorted_approvals(view)
-    panels = [render_agent(a, [p for p in approvals if p.get("agent_id") == a["id"]]) for a in agents]
+    projects = view.get("projects", {})
+    panels = [
+        render_agent(
+            a,
+            [p for p in approvals if p.get("agent_id") == a["id"]],
+            projects.get(a.get("project"), {}).get("name"),
+        )
+        for a in agents
+    ]
     return Panel(Columns(panels, expand=False), title="agentes", border_style="dim")
 
 
