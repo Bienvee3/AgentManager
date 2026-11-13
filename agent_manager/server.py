@@ -195,32 +195,26 @@ def create_app(settings: Settings) -> FastAPI:
         hub = hub_of(ws)
         await ws.accept()
         queue = await hub.subscribe()  # subscribe first: no event is lost between snapshot and stream
+
+        async def sender() -> None:
+            while True:
+                event = await queue.get()
+                if event is None:  # hub dropped this slow subscriber
+                    await ws.close(code=1013)
+                    return
+                await ws.send_json(event)
+
+        sender_task: asyncio.Task | None = None
         try:
             await ws.send_json({"type": "snapshot", "data": await hub.snapshot()})
-
-            async def sender() -> None:
-                while True:
-                    event = await queue.get()
-                    if event is None:  # hub dropped this slow subscriber
-                        return
-                    await ws.send_json(event)
-
-            async def receiver() -> None:
-                while True:  # clients send nothing; this only notices disconnects
-                    await ws.receive_text()
-
-            tasks = [asyncio.create_task(sender()), asyncio.create_task(receiver())]
-            try:
-                done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    task.result()
-            finally:
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+            sender_task = asyncio.create_task(sender())
+            while True:  # clients send nothing; this only notices disconnects
+                await ws.receive_text()
         except WebSocketDisconnect:
             pass
         finally:
+            if sender_task is not None:
+                sender_task.cancel()
             await hub.unsubscribe(queue)
 
     # Static UI last, so it never shadows /api or /ws.

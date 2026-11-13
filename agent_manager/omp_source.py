@@ -39,6 +39,7 @@ BUNDLED_AGENTS = {
     "sonic": "Mechanical low-reasoning agent",
 }
 IDLE_AFTER_S = 300  # unfinished work with no file activity for this long is shown as paused
+ERROR_SHOW_S = 120  # a failed run keeps showing its error this long, then its desk goes back to available
 ACTIVE_S = 900  # a session with activity inside this window makes its project "active" (opens a room)
 CLOSE_GRACE_S = 60  # an inactive project's room closes after this long
 DISCOVERY_INTERVAL_S = 10  # how often active projects / rosters are re-discovered
@@ -339,7 +340,7 @@ class Tracker:
         self.error_kind = None
         self.task = ""
         if self.is_main:
-            self.status, self.detail = Status.waiting_input, "Esperando tu input"
+            self.status, self.detail = Status.idle, "Esperando tu input"
         else:
             self.status, self.detail = Status.idle, "Tarea completada"
 
@@ -430,6 +431,8 @@ class Tracker:
             status, detail = Status.offline, "Sesión inactiva"
         elif status == Status.working and quiet_s > IDLE_AFTER_S:
             status, detail = Status.paused, "Sin actividad reciente"
+        elif status == Status.error and quiet_s > ERROR_SHOW_S:
+            status, detail = Status.idle, "Terminó con error"
         return Update(
             key=str(self.path),
             name="Sesión principal" if self.is_main else self.path.stem,

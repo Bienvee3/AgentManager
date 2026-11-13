@@ -225,7 +225,8 @@ def test_scanner_tracks_main_and_subagents_incrementally(tmp_path, omp_home):
     assert ("info", "Respuesta: All done") in ui.logs
 
     append(main, assistant("stop", text="hi"))
-    assert scan(scanner)[MAIN_NAME].status == Status.waiting_input
+    main_state = scan(scanner)[MAIN_NAME]
+    assert (main_state.status, main_state.detail) == (Status.idle, "Esperando tu input")  # off stage until the next prompt
 
 
 def test_partial_line_is_not_consumed_until_complete(tmp_path, omp_home):
@@ -262,6 +263,19 @@ def test_error_exit_and_stale(tmp_path, omp_home):
     ancient = time.time() - 7200
     os.utime(sub, (ancient, ancient))
     assert scan(scanner)["Boom"].status == Status.offline
+
+
+def test_a_failed_run_stops_showing_its_error_after_a_while(tmp_path, omp_home):
+    project = tmp_path / "proj"
+    project.mkdir()
+    main = make_session(omp_home, project)
+    sub = make_sub(main, "Failed", "task", assistant("error"))
+    scanner = SessionScanner(project, omp_home)
+    assert scan(scanner)["Failed"].status == Status.error
+    stale = time.time() - 200
+    os.utime(sub, (stale, stale))
+    failed = scan(scanner)["Failed"]
+    assert (failed.status, failed.error_kind) == (Status.idle, None)
 
 
 def test_long_finished_subagents_are_not_tracked(tmp_path, omp_home):
