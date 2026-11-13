@@ -130,6 +130,7 @@ body {
   pointer-events: none;
 }
 
+/* Label: HITL bubble slot above two stacked dark pills (name + status). */
 .fig-label {
   position: absolute;
   top: 0;
@@ -137,8 +138,9 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 3px;
   width: max-content;
-  max-width: 130px;
+  max-width: 150px;
   pointer-events: none;
   transform: translate(-50%, -100%);
 }
@@ -153,40 +155,57 @@ body {
   margin-bottom: 20px;
 }
 
-.fig-label .status-tag {
-  margin-bottom: 8px;
-  padding: 4px 6px;
+.pill {
+  position: relative;
+  padding: 3px 6px;
+  font-family: var(--font-title);
+  font-size: 8px;
+  line-height: 1.4;
+  text-align: center;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+  background: rgba(10, 14, 22, 0.88);
+  border: 2px solid #2b3a4a;
   pointer-events: auto;
 }
 
-.fig-label .status-tag.is-clickable {
+.fig-label.is-clickable .pill {
   cursor: pointer;
 }
 
-.fig-label .tag-main {
-  font-size: 8px;
-  line-height: 1.4;
+.pill-name {
+  color: #fff;
 }
 
-.fig-label .tag-detail {
-  margin-top: 2px;
-  font-size: 14px;
+.pill-status {
+  color: var(--tone, var(--idle));
+  border-color: var(--tone, var(--idle));
 }
 
-/* Resting agents crowd the lounge: show just the name until hovered. */
-.fig-label.status-idle .tag-detail,
-.fig-label.status-offline .tag-detail {
-  display: none;
+/* Waiting for approval: red pill with corner brackets. */
+.status-waiting_approval .pill-status {
+  --tone: var(--err);
+  --bracket: var(--err);
 }
 
-.fig-label.status-idle:hover .tag-detail,
-.fig-label.status-offline:hover .tag-detail {
-  display: block;
+.status-waiting_approval .pill-status::before {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--bracket), var(--bracket)) top left / 7px 2px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) top left / 2px 7px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) top right / 7px 2px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) top right / 2px 7px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) bottom left / 7px 2px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) bottom left / 2px 7px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) bottom right / 7px 2px no-repeat,
+    linear-gradient(var(--bracket), var(--bracket)) bottom right / 2px 7px no-repeat;
 }
 
-.fig-label.status-idle:hover,
-.fig-label.status-offline:hover {
-  z-index: 5;
+.fig-label.status-error .pill-status {
+  animation: blink 0.8s steps(2) infinite;
 }
 
 .door-sign {
@@ -261,66 +280,6 @@ body {
 }
 .tone-off {
   --tone: var(--off);
-}
-
-/* Status tag floating over the agent. */
-.status-tag {
-  position: relative;
-  max-width: 100%;
-  margin-bottom: 12px;
-  padding: 8px 10px;
-  text-align: center;
-  color: #10121a;
-  background: var(--tone, var(--idle));
-  border: var(--px) solid #000;
-  box-shadow: var(--px) var(--px) 0 #000;
-}
-
-.tag-main {
-  display: block;
-  font-size: 8px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
-.tag-detail {
-  display: block;
-  margin-top: 4px;
-  font-family: var(--font-term);
-  font-size: 16px;
-  line-height: 1;
-  overflow-wrap: anywhere;
-  opacity: 0.85;
-}
-
-/* Arrow built from two stepped pseudo-elements (outline + fill). */
-.status-tag::before,
-.status-tag::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 100%;
-}
-
-.status-tag::before {
-  width: 24px;
-  height: 12px;
-  margin-left: -12px;
-  background: #000;
-  clip-path: polygon(0 0, 100% 0, 100% 33.33%, 83.33% 33.33%, 83.33% 66.66%, 66.66% 66.66%, 66.66% 100%, 33.33% 100%, 33.33% 66.66%, 16.66% 66.66%, 16.66% 33.33%, 0 33.33%);
-}
-
-.status-tag::after {
-  width: 16px;
-  height: 8px;
-  margin-left: -8px;
-  margin-top: -4px;
-  background: var(--tone, var(--idle));
-  clip-path: polygon(0 0, 100% 0, 100% 50%, 75% 50%, 75% 100%, 25% 100%, 25% 50%, 0 50%);
-}
-
-.status-error .status-tag {
-  animation: blink 0.8s steps(2) infinite;
 }
 
 /* ---------- HITL bubble ---------- */
@@ -472,22 +431,22 @@ body {
 /* ---------- Dashboard ---------- */
 .hud-panel {
   padding: 16px;
-  color: #cfeedd;
-  background: #0b0f0b;
-  border: var(--px) solid #8d99ae;
+  color: #cfe3f5;
+  background: #0f1b2d;
+  border: 3px solid #3a5a80;
   box-shadow: var(--px) var(--px) 0 #000;
 }
 
 .hud-title {
   margin: 0 0 16px;
   font-size: 12px;
-  color: var(--ok);
+  color: #9fd8ff;
 }
 
 .hud-subtitle {
   margin: 20px 0 8px;
   font-size: 9px;
-  color: var(--hitl);
+  color: #9fd8ff;
 }
 
 .hud-rows {
@@ -647,7 +606,6 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .status-error .status-tag,
   .led-off {
     animation: none;
   }

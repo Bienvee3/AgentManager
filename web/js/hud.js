@@ -1,17 +1,16 @@
 // HUD: system dashboard and log terminal.
 
-import { statusText } from "./config.js";
+import { isActive, statusText } from "./config.js";
 import { el, fmtTime } from "./store.js";
 
 const ROWS = [
-  ["total", "AGENTES"],
+  ["active", "AGENTES ACTIVOS"],
   ["projects", "PROYECTOS"],
   ["working", "TRABAJANDO"],
   ["waiting", "EN ESPERA/PAUSA"],
   ["hitl", "HITL PENDIENTES"],
   ["errors", "ERRORES"],
-  ["offline", "DESCONECTADOS"],
-  ["manager", "MANAGER"],
+  ["state", "ESTADO"],
   ["last", "ÚLTIMO EVENTO"],
 ];
 
@@ -43,7 +42,7 @@ function buildRows(defs) {
 
 function buildDashboard(root) {
   root.replaceChildren();
-  root.append(el("h2", "hud-title", "SYSTEM STATUS"));
+  root.append(el("h2", "hud-title", "TABLERO DE CONTROL"));
   const system = buildRows(ROWS);
   root.append(system.list);
   const agentSection = el("div", "hud-agent");
@@ -74,23 +73,23 @@ function renderAgentSection(dash, state, selectedId) {
 
 export function renderDashboard(root, state, selectedId, onFocusAgent) {
   const dash = root._dash ?? buildDashboard(root);
-  const counts = { working: 0, waiting: 0, errors: 0, offline: 0 };
+  const counts = { active: 0, working: 0, waiting: 0, errors: 0 };
   for (const agent of state.agents.values()) {
+    if (!isActive(agent)) continue;
+    counts.active++;
     if (agent.status === "working") counts.working++;
     else if (agent.status === "paused" || agent.status === "waiting_input") counts.waiting++;
     else if (agent.status === "error") counts.errors++;
-    else if (agent.status === "offline") counts.offline++;
   }
   const v = dash.values;
-  setText(v.total, String(state.agents.size));
+  setText(v.active, String(counts.active));
   setText(v.projects, String(state.projects.size));
   setText(v.working, String(counts.working));
   setText(v.waiting, String(counts.waiting));
   setText(v.hitl, String(state.approvals.size));
   setText(v.errors, String(counts.errors));
-  setText(v.offline, String(counts.offline));
-  setText(v.manager, state.connected ? "ONLINE" : "OFFLINE");
-  v.manager.className = `hud-value ${state.connected ? "is-online" : "is-offline"}`;
+  setText(v.state, state.connected ? "OPERATIVO" : "SIN CONEXIÓN");
+  v.state.className = `hud-value ${state.connected ? "is-online" : "is-offline"}`;
   setText(v.last, state.lastEventAt ? fmtTime(state.lastEventAt) : "—");
 
   renderAgentSection(dash, state, selectedId);

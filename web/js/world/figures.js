@@ -1,19 +1,19 @@
-// Voxel people: model builder plus the behaviour state machine (walk, sit,
-// type, wave, wander) driven by the agent status.
+// Voxel office workers: model builder plus the behaviour state machine (walk
+// in, sit and type, wave, walk out) driven by the agent status.
 
 import * as THREE from "three";
-import { DOOR_POINT, deskSlot, planPath, randomLoungePoint } from "./layout.js";
+import { DOOR_POINT, deskSlot, planPath } from "./layout.js";
 import { box } from "./voxel.js";
 
-// hair / skin / shirt
+// Full dark-suit looks: hair / skin / jacket / trousers / tie.
 export const AGENT_PALETTES = [
-  { H: "#3b2a1a", S: "#f1c27d", T: "#2e86de" },
-  { H: "#f2c14e", S: "#ffdbac", T: "#8e44ad" },
-  { H: "#1d1d1d", S: "#8d5524", T: "#16a085" },
-  { H: "#c0392b", S: "#e0ac69", T: "#d35400" },
+  { H: "#1d1d1d", S: "#f1c27d", T: "#2b2d42", P: "#1d1f2e", tie: "#c0392b" },
+  { H: "#3b2a1a", S: "#ffdbac", T: "#3a3f4b", P: "#2b2f3a", tie: "#2e5aa8" },
+  { H: "#8a3b1b", S: "#8d5524", T: "#22252e", P: "#181a21", tie: "#1d7a5b" },
+  { H: "#f2c14e", S: "#e0ac69", T: "#34384a", P: "#262938", tie: "#c9a227" },
 ];
 
-export const USER_PALETTE = { H: "#4a2c17", S: "#f1c27d", T: "#e63946" };
+export const USER_PALETTE = { H: "#4a2c17", S: "#f1c27d", T: "#1d2b53", P: "#141d3a", tie: "#c0392b" };
 
 // FNV-1a (32 bit) of the id, used when the agent has no explicit avatar.
 export function fnv1a(text) {
@@ -34,18 +34,7 @@ export function agentPalette(agent) {
   return AGENT_PALETTES[Math.abs(agentVariant(agent)) % AGENT_PALETTES.length];
 }
 
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-const PANTS = "#2d3047";
+const SHIRT = "#f2f2f2";
 const EYES = "#1a1a2e";
 
 // Returns a Group (feet at y = 0, facing +z). `group.userData.parts` holds the
@@ -60,19 +49,24 @@ export function buildFigure(palette) {
     return pivot;
   };
 
-  // Legs hang from the hip (y = 0.45).
+  // Trousers hang from the hip (y = 0.45).
   const legL = pivotAt(-0.12, 0.45, 0);
   const legR = pivotAt(0.12, 0.45, 0);
-  legL.add(box(0.18, 0.45, 0.2, PANTS, 0, -0.225, 0));
-  legR.add(box(0.18, 0.45, 0.2, PANTS, 0, -0.225, 0));
+  legL.add(box(0.18, 0.45, 0.2, palette.P, 0, -0.225, 0));
+  legR.add(box(0.18, 0.45, 0.2, palette.P, 0, -0.225, 0));
 
+  // Jacket with a white shirt strip and a tie on the front (+z).
   group.add(box(0.5, 0.55, 0.3, palette.T, 0, 0.725, 0));
+  group.add(box(0.16, 0.4, 0.02, SHIRT, 0, 0.78, 0.155));
+  group.add(box(0.06, 0.3, 0.02, palette.tie, 0, 0.74, 0.168));
 
-  // Arms hang from the shoulder.
+  // Sleeves hang from the shoulder; the hand is a skin-coloured block.
   const armL = pivotAt(-0.325, 0.95, 0);
   const armR = pivotAt(0.325, 0.95, 0);
-  armL.add(box(0.15, 0.5, 0.18, palette.T, 0, -0.25, 0));
-  armR.add(box(0.15, 0.5, 0.18, palette.T, 0, -0.25, 0));
+  for (const arm of [armL, armR]) {
+    arm.add(box(0.15, 0.4, 0.18, palette.T, 0, -0.2, 0));
+    arm.add(box(0.13, 0.12, 0.16, palette.S, 0, -0.46, 0));
+  }
 
   const head = pivotAt(0, 1.0, 0);
   head.add(box(0.42, 0.42, 0.42, palette.S, 0, 0.21, 0));
@@ -86,7 +80,7 @@ export function buildFigure(palette) {
 }
 
 const SPEED = 2.2;
-const SIT_DROP = 0.3;
+const SIT_DROP = 0.25;
 const REACH = 1e-3;
 const SEATED_STATUSES = new Set(["working", "error", "paused", "waiting_input"]);
 
@@ -101,59 +95,43 @@ function shortestAngle(from, to) {
 }
 
 export class Figure {
-  constructor(palette, { seed = 1 } = {}) {
+  constructor(palette) {
     this.root = new THREE.Group();
     this.model = buildFigure(palette);
     this.parts = this.model.userData.parts;
     this.root.add(this.model);
-    this.rand = mulberry32(seed);
 
     this.pos = { x: DOOR_POINT.x, z: DOOR_POINT.z };
     this.yaw = 0;
     this.path = [];
-    this.goal = { pose: "idle" };
+    this.goal = { pose: "leave", at: DOOR_POINT, yaw: 0 };
     this.status = null;
     this.slot = null;
-    this.hidden = false;
     this.removing = false;
-    this.done = false;
-    this.fixed = false;
-    this.wanderAt = 0;
+    this.done = false; // walked out: the world may dispose it
     this.walk = 0; // 0..1 swing amplitude
     this.sit = 0; // 0..1 sitting blend
     this.wave = 0; // 0..1 raised arm blend
-    this.clock = 0;
     this.syncTransform();
   }
 
-  // Permanently seated figure (the user's avatar).
+  // Permanently seated figure (the user's avatar), facing the camera.
   setFixedSeat(seat) {
-    this.fixed = true;
     this.pos = { x: seat.x, z: seat.z };
-    this.goal = { pose: "sit", typing: false, sway: true, at: seat };
+    this.goal = { pose: "sit", typing: false, sway: true, at: seat, yaw: 0 };
+    this.yaw = 0;
     this.sit = 1;
     this.syncTransform();
   }
 
+  // Active agent at desk `slot`; walks there from wherever it stands.
   setAgent(agent, slot) {
     const status = agent.status || "idle";
-    if (status === this.status && slot === this.slot) return;
-    const first = this.status === null;
+    const revived = this.removing;
+    if (status === this.status && slot === this.slot && !revived) return;
     this.status = status;
     this.slot = slot;
-    if (status === "offline") {
-      if (first) {
-        // Already offline when first seen: never enters the room.
-        this.hidden = true;
-        this.root.visible = false;
-      }
-      if (this.hidden) return;
-    } else if (this.hidden) {
-      // Coming back online: enter through the door again.
-      this.hidden = false;
-      this.root.visible = true;
-      this.pos = { x: DOOR_POINT.x, z: DOOR_POINT.z };
-    }
+    this.removing = false;
     this.replan();
   }
 
@@ -165,21 +143,20 @@ export class Figure {
   }
 
   replan() {
-    const seat = this.slot === null ? null : deskSlot(this.slot);
-    if (this.removing || this.status === "offline") {
-      this.goal = { pose: "leave", at: DOOR_POINT };
-    } else if (SEATED_STATUSES.has(this.status) && seat) {
+    const spot = this.slot === null ? null : deskSlot(this.slot);
+    if (this.removing || !spot || !(SEATED_STATUSES.has(this.status) || this.status === "waiting_approval")) {
+      this.goal = { pose: "leave", at: DOOR_POINT, yaw: 0 };
+    } else if (this.status === "waiting_approval") {
+      this.goal = { pose: "wave", at: spot.stand, yaw: 0 };
+    } else {
+      // Seated at the desk, back to the camera, facing the monitors (-z).
       this.goal = {
         pose: "sit",
         typing: this.status === "working",
         sway: this.status === "paused" || this.status === "waiting_input",
-        at: seat.seat,
+        at: spot.seat,
+        yaw: Math.PI,
       };
-    } else if (this.status === "waiting_approval" && seat) {
-      this.goal = { pose: "wave", at: seat.stand };
-    } else {
-      this.goal = { pose: "idle", at: randomLoungePoint(this.rand) };
-      this.wanderAt = this.clock + 6 + this.rand() * 4;
     }
     this.moveTo(this.goal.at);
   }
@@ -188,7 +165,9 @@ export class Figure {
     if (reducedMotion()) {
       this.path = [];
       this.pos = { x: target.x, z: target.z };
+      this.yaw = this.goal.yaw;
       this.afterArrival();
+      this.syncTransform();
       return;
     }
     this.path = planPath(this.pos, target);
@@ -196,15 +175,11 @@ export class Figure {
   }
 
   afterArrival() {
-    if (this.goal.pose !== "leave") return;
-    this.hidden = true;
-    this.root.visible = false;
-    if (this.removing) this.done = true;
+    if (this.goal.pose === "leave") this.done = true;
   }
 
   update(dt, t) {
-    this.clock = t;
-    if (this.hidden || this.done) return;
+    if (this.done) return;
     const still = reducedMotion();
 
     let moving = false;
@@ -237,15 +212,12 @@ export class Figure {
       if (this.path.length === 0) {
         moving = false;
         this.afterArrival();
-        if (this.done || this.hidden) return;
+        if (this.done) return;
       }
-    } else if (this.goal.pose === "idle" && !this.fixed && t >= this.wanderAt) {
-      this.goal = { pose: "idle", at: randomLoungePoint(this.rand) };
-      this.wanderAt = t + 6 + this.rand() * 4;
-      this.moveTo(this.goal.at);
-      moving = this.path.length > 0;
-    } else {
-      this.yaw += shortestAngle(this.yaw, 0) * Math.min(1, dt * 10);
+    }
+    if (!moving) {
+      // Arrived: turn to the pose's facing (monitors / camera).
+      this.yaw += shortestAngle(this.yaw, this.goal.yaw) * Math.min(1, dt * 10);
     }
 
     const seated = !moving && this.goal.pose === "sit";
@@ -261,12 +233,13 @@ export class Figure {
     legL.rotation.x = lerp(swing, -Math.PI / 2, sit);
     legR.rotation.x = lerp(-swing, -Math.PI / 2, sit);
 
-    let typeL = -1.0;
-    let typeR = -1.0;
+    // Hands rest on the keyboard; typing alternates the arms.
+    let typeL = -1.3;
+    let typeR = -1.3;
     if (this.goal.typing && !still) {
       const wobble = Math.sin(t * 18) * 0.15;
-      typeL = -1.2 + wobble;
-      typeR = -1.2 - wobble;
+      typeL = -1.4 + wobble;
+      typeR = -1.4 - wobble;
     }
     armL.rotation.x = lerp(-swing, typeL, sit);
     const armRWalk = lerp(swing, typeR, sit);

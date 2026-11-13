@@ -75,3 +75,9 @@ export function statusText(agent) {
   if (task) text += ` (${task.toUpperCase()})`;
   return text;
 }
+
+// Only agents in one of these statuses are on stage (figure + label); idle and
+// offline agents leave through the door and their desk stays empty.
+export const ACTIVE_STATUSES = new Set(["working", "paused", "waiting_input", "waiting_approval", "error"]);
+// Agents that lost their heartbeat are gone, not working: they leave the stage too.
+export const isActive = (agent) => ACTIVE_STATUSES.has(agent.status) && agent.error_kind !== "lost";

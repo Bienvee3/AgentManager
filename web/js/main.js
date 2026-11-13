@@ -44,17 +44,17 @@ function renderConnection(connected) {
   connTextEl.textContent = connected ? "ONLINE" : "OFFLINE";
 }
 
-// One button per room: title + number of working agents.
+// One button per room: title + number of active agents.
 let tabsKey = "";
 function renderRoomTabs(state) {
   const active = world.currentRoom();
   const rooms = listRooms(state);
-  const key = rooms.map((r) => `${r.index}\u0000${r.title}\u0000${r.working}`).join("\u0001") + `\u0002${active}`;
+  const key = rooms.map((r) => `${r.index}\u0000${r.title}\u0000${r.active}`).join("\u0001") + `\u0002${active}`;
   if (key === tabsKey) return;
   tabsKey = key;
   roomsEl.replaceChildren(
     ...rooms.map((room) => {
-      const button = el("button", "room-tab", `${room.title} (${room.working})`);
+      const button = el("button", "room-tab", `${room.title} (${room.active})`);
       button.type = "button";
       if (room.index === active) button.classList.add("active");
       button.addEventListener("click", () => world.goToRoom(room.index));

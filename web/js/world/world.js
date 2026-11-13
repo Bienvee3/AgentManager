@@ -1,10 +1,10 @@
 // Three.js voxel world: rooms, figures, camera, picking and the render loop.
 
 import * as THREE from "three";
-import { statusTone } from "../config.js";
-import { el, listRooms } from "../store.js";
-import { Figure, USER_PALETTE, agentPalette, fnv1a } from "./figures.js";
-import { BOSS_SEAT, DOOR_POINT, FRONT_Z, ROOM_W, backWallZ, roomX, rows } from "./layout.js";
+import { isActive, statusTone } from "../config.js";
+import { MAIN_ROOM_TITLE, el, listRooms } from "../store.js";
+import { Figure, USER_PALETTE, agentPalette } from "./figures.js";
+import { BOSS_SEAT, FRONT_Z, ROOM_W, backWallZ, roomX, rows } from "./layout.js";
 import { createOverlay } from "./overlay.js";
 import { buildRoom } from "./rooms.js";
 
@@ -60,7 +60,6 @@ export function createWorld(root, { callbacks, api, onSelect, onRoomChange }) {
 
   const rooms = new Map(); // index -> room
   const figures = new Map(); // agent id -> { figure, room }
-  const leaving = new Set(); // { figure, room } walking out
   let userFigure = null;
   let model = []; // listRooms() of the last state
   let current = 0;
@@ -147,19 +146,31 @@ export function createWorld(root, { callbacks, api, onSelect, onRoomChange }) {
 
   function ensureUser() {
     if (userFigure) return;
-    userFigure = new Figure(USER_PALETTE, { seed: 7 });
+    userFigure = new Figure(USER_PALETTE);
     userFigure.setFixedSeat(BOSS_SEAT);
     rooms.get(0).group.add(userFigure.root);
-    userFigure.root.userData.agentId = null;
-    overlay.setUserLabel(USER_ID, "TÚ");
+    overlay.setUserLabel(USER_ID, "TÚ · DIRECTOR");
   }
 
+  function dropFigure(id) {
+    const entry = figures.get(id);
+    if (!entry) return;
+    rooms.get(entry.room)?.group.remove(entry.figure.root);
+    figures.delete(id);
+    overlay.removeLabel(id);
+  }
+
+  // Only active agents are on stage: they walk in through the door when they
+  // become active and walk out (then vanish) when they stop being so.
   function reconcile(state) {
     lastState = state;
     model = listRooms(state);
     const wanted = new Set(model.map((r) => r.index));
 
-    for (const info of model) ensureRoom(info);
+    for (const info of model) {
+      const room = ensureRoom(info);
+      room.setTitle(info.index === 0 ? MAIN_ROOM_TITLE : (info.project?.name ?? info.title).toUpperCase());
+    }
     ensureUser();
 
     const pendingByAgent = new Map();
@@ -168,28 +179,30 @@ export function createWorld(root, { callbacks, api, onSelect, onRoomChange }) {
       pendingByAgent.get(approval.agent_id).push(approval);
     }
 
-    const live = new Set();
+    const onStage = new Set();
     for (const info of model) {
       const room = rooms.get(info.index);
       const tones = new Array(room.deskCount).fill("off");
       info.agents.forEach((agent, slot) => {
-        live.add(agent.id);
         let entry = figures.get(agent.id);
+        if (!isActive(agent)) {
+          if (entry && !entry.figure.removing) {
+            entry.figure.remove();
+            overlay.removeLabel(agent.id);
+          }
+          return;
+        }
+        onStage.add(agent.id);
+        if (entry && entry.room !== info.index) {
+          dropFigure(agent.id); // moved to another room: re-enter there
+          entry = undefined;
+        }
         if (!entry) {
-          const figure = new Figure(agentPalette(agent), { seed: fnv1a(String(agent.id)) });
+          const figure = new Figure(agentPalette(agent));
           figure.root.userData.agentId = agent.id;
           entry = { figure, room: info.index };
           figures.set(agent.id, entry);
           room.group.add(figure.root);
-        } else if (entry.room !== info.index) {
-          rooms.get(entry.room)?.group.remove(entry.figure.root);
-          room.group.add(entry.figure.root);
-          entry.room = info.index;
-          entry.figure.slot = null;
-          entry.figure.status = null;
-          entry.figure.hidden = false;
-          entry.figure.pos = { x: DOOR_POINT.x, z: DOOR_POINT.z };
-          entry.figure.root.visible = true;
         }
         entry.figure.setAgent(agent, slot);
         tones[slot] = statusTone(agent);
@@ -198,19 +211,18 @@ export function createWorld(root, { callbacks, api, onSelect, onRoomChange }) {
       room.setTones(tones);
     }
 
+    // Agents that disappeared from the roster walk out too.
     for (const [id, entry] of figures) {
-      if (live.has(id)) continue;
-      figures.delete(id);
-      overlay.removeLabel(id);
+      if (onStage.has(id) || entry.figure.removing) continue;
       entry.figure.remove();
-      leaving.add(entry);
+      overlay.removeLabel(id);
     }
 
     // Rooms that no longer exist: drop them together with their figures.
     for (const [index, room] of rooms) {
       if (wanted.has(index)) continue;
-      for (const entry of [...leaving]) {
-        if (entry.room === index) leaving.delete(entry);
+      for (const [id, entry] of [...figures]) {
+        if (entry.room === index) dropFigure(id);
       }
       scene.remove(room.group);
       room.dispose();
@@ -263,7 +275,7 @@ export function createWorld(root, { callbacks, api, onSelect, onRoomChange }) {
     if (!room) return;
     const targets = [...room.doors];
     for (const entry of figures.values()) {
-      if (entry.room === current && entry.figure.root.visible) targets.push(entry.figure.root);
+      if (entry.room === current && !entry.figure.removing) targets.push(entry.figure.root);
     }
     const hit = raycaster.intersectObjects(targets, true)[0];
     if (!hit) return;
@@ -344,15 +356,11 @@ export function createWorld(root, { callbacks, api, onSelect, onRoomChange }) {
     stepTween(now);
     applyCamera();
     for (const room of rooms.values()) room.update(t);
-    for (const entry of figures.values()) entry.figure.update(dt, t);
-    userFigure?.update(dt, t);
-    for (const entry of leaving) {
+    for (const [id, entry] of figures) {
       entry.figure.update(dt, t);
-      if (entry.figure.done) {
-        rooms.get(entry.room)?.group.remove(entry.figure.root);
-        leaving.delete(entry);
-      }
+      if (entry.figure.done) dropFigure(id); // walked out through the door
     }
+    userFigure?.update(dt, t);
     scene.updateMatrixWorld();
     placeOverlay();
     renderer.render(scene, camera);

@@ -12,48 +12,47 @@ function setText(node, text) {
 export function createOverlay(root, { onSelect, onDoor }) {
   const node = el("div", "world-overlay");
   root.append(node);
-  const labels = new Map(); // id -> { node, tag, main, detail, bubble }
+  const labels = new Map(); // id -> { node, name, status, ... }
   const signs = new Map(); // key -> { node, text, target }
 
+  // Label = optional HITL bubble slot (added by renderBubble) above two stacked
+  // dark pills: the name and the status.
   function ensureLabel(id, kind) {
     let label = labels.get(id);
     if (label) return label;
     const labelNode = el("div", "fig-label");
-    const tag = el("div", "status-tag");
-    const main = el("span", "tag-main");
-    const detail = el("span", "tag-detail");
-    tag.append(main, detail);
-    labelNode.append(tag);
+    const name = el("div", "pill pill-name");
+    const status = el("div", "pill pill-status");
+    labelNode.append(name, status);
     labelNode.hidden = true;
     if (kind === "agent") {
-      tag.classList.add("is-clickable");
-      tag.addEventListener("click", () => onSelect?.(id));
+      labelNode.classList.add("is-clickable");
+      name.addEventListener("click", () => onSelect?.(id));
+      status.addEventListener("click", () => onSelect?.(id));
     }
     node.append(labelNode);
-    label = { node: labelNode, tag, main, detail, x: NaN, y: NaN, z: "" };
+    label = { node: labelNode, name, status, x: NaN, y: NaN, z: "", hasBubble: false };
     labels.set(id, label);
     return label;
   }
 
-  // The user's own avatar.
+  // The user's own avatar: name pill only.
   function setUserLabel(id, text) {
     const label = ensureLabel(id, "user");
-    label.tag.className = "status-tag tone-ok";
-    setText(label.main, text);
-    label.detail.hidden = true;
+    setText(label.name, text);
+    label.status.hidden = true;
   }
 
   function setAgentLabel(agent, pending, callbacks, api) {
     const label = ensureLabel(agent.id, "agent");
-    const tone = statusTone(agent);
-    const tagCls = `status-tag is-clickable tone-${tone}`;
-    if (label.tag.className !== tagCls) label.tag.className = tagCls;
-    const cls = `fig-label status-${agent.status}`;
+    const cls = `fig-label is-clickable status-${agent.status}`;
     if (label.node.className !== cls) label.node.className = cls;
-    setText(label.main, agent.name || agent.id);
+    const statusCls = `pill pill-status tone-${statusTone(agent)}`;
+    if (label.status.className !== statusCls) label.status.className = statusCls;
+    setText(label.name, agent.name || agent.id);
     const task = (agent.task || "").trim();
-    setText(label.detail, statusLabel(agent) + (task ? ` (${task.toUpperCase()})` : ""));
-    label.detail.hidden = false;
+    setText(label.status, statusLabel(agent) + (task ? ` (${task.toUpperCase()})` : ""));
+    label.status.hidden = false;
     renderBubble(label.node, pending, callbacks, api);
     label.hasBubble = pending.length > 0;
   }

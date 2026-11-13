@@ -1,5 +1,7 @@
 // Client-side state store plus small DOM/time helpers shared by the modules.
 
+import { isActive } from "./config.js";
+
 const MAX_LOGS = 500;
 
 export function createStore() {
@@ -103,13 +105,14 @@ export function roomOf(agent, projects) {
 
 export const MAIN_ROOM_TITLE = "OFICINA PRINCIPAL";
 
-// Rooms in index order: [{ index, title, project, agents, working }]. Agents
-// are in desk-slot order: the room's own project agents first, then agents
-// without a project (runtime / config / simulator) that live in room 0.
+// Rooms in index order: [{ index, title, project, agents, active }]. `agents`
+// holds every agent of the room (desk slot = index in the list): the room's
+// own project agents first, then agents without a project (runtime / config /
+// simulator) that live in room 0. `active` counts those on stage (isActive).
 export function listRooms(state) {
   const rooms = new Map();
   const ensure = (index) => {
-    if (!rooms.has(index)) rooms.set(index, { index, title: "", project: null, agents: [], working: 0 });
+    if (!rooms.has(index)) rooms.set(index, { index, title: "", project: null, agents: [], active: 0 });
     return rooms.get(index);
   };
   ensure(0);
@@ -117,7 +120,7 @@ export function listRooms(state) {
   for (const agent of state.agents.values()) {
     const room = ensure(roomOf(agent, state.projects));
     room.agents.push(agent);
-    if (agent.status === "working") room.working += 1;
+    if (isActive(agent)) room.active += 1;
   }
   const rank = (a) => (a.project && state.projects.has(a.project) ? 0 : 1);
   for (const room of rooms.values()) {
