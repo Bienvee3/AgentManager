@@ -12,9 +12,11 @@ from collections import deque
 from datetime import timedelta
 from typing import Any
 
+from pydantic import BaseModel
+
 from . import hitl_callbacks, labels
 from .config import Settings
-from .models import AgentState, Approval, LogEntry, Status, utcnow
+from .models import AgentState, Approval, LogEntry, ProjectState, Status, utcnow
 
 SUBSCRIBER_QUEUE_LIMIT = 1000
 SNAPSHOT_LOGS = 200
@@ -44,6 +46,7 @@ class Hub:
         self.settings = settings
         self.agents: dict[str, AgentState] = {a.id: a for a in agents}
         self.approvals: dict[str, Approval] = {}
+        self.projects: dict[str, ProjectState] = {}
         self._waiters: dict[str, asyncio.Event] = {}
         self.logs: deque[LogEntry] = deque(maxlen=settings.monitor.log_buffer)
         self._subscribers: set[asyncio.Queue] = set()
@@ -62,7 +65,8 @@ class Hub:
         self._subscribers.discard(queue)
 
     def _broadcast(self, event_type: str, data: Any) -> None:
-        event = {"type": event_type, "data": data.model_dump(mode="json")}
+        payload = data.model_dump(mode="json") if isinstance(data, BaseModel) else data
+        event = {"type": event_type, "data": payload}
         for queue in list(self._subscribers):
             if queue.qsize() >= SUBSCRIBER_QUEUE_LIMIT:
                 self._subscribers.discard(queue)  # slow client: drop it
@@ -73,6 +77,7 @@ class Hub:
     async def snapshot(self) -> dict[str, Any]:
         return {
             "agents": [a.model_dump(mode="json") for a in self._sorted_agents()],
+            "projects": [p.model_dump(mode="json") for p in sorted(self.projects.values(), key=lambda p: p.room)],
             "approvals": [
                 a.model_dump(mode="json") for a in self.approvals.values() if a.status == "pending"
             ],
@@ -151,6 +156,47 @@ class Hub:
                 self._record_log(agent_id, "info", labels.status_text(agent))
         self._broadcast("agent", agent)
         return agent
+
+    async def put_agent(self, agent: AgentState) -> AgentState:
+        """Insert a ready-made agent, or refresh the descriptive fields of an existing one
+        (live status/task/detail are kept)."""
+        current = self.agents.get(agent.id)
+        if current is None:
+            self.agents[agent.id] = agent
+            self._record_log(agent.id, "system", f"Agente registrado: {agent.name}")
+            self._broadcast("agent", agent)
+            return agent
+        changed = False
+        for field in ("name", "role", "model", "desk", "project"):
+            value = getattr(agent, field)
+            if getattr(current, field) != value:
+                setattr(current, field, value)
+                changed = True
+        if changed:
+            self._broadcast("agent", current)
+        return current
+
+    async def remove_agent(self, agent_id: str) -> None:
+        if agent_id not in self.agents:
+            return
+        for approval in [a for a in self.approvals.values() if a.agent_id == agent_id and a.status == "pending"]:
+            await self.expire(approval.id)
+        self.agents.pop(agent_id, None)
+        self._broadcast("agent_removed", {"id": agent_id})
+
+    async def upsert_project(self, project: ProjectState) -> None:
+        self.projects[project.id] = project
+        self._broadcast("project", project)
+
+    async def remove_project(self, project_id: str) -> None:
+        project = self.projects.get(project_id)
+        if project is None:
+            return
+        for agent in [a for a in self.agents.values() if a.project == project_id]:
+            await self.remove_agent(agent.id)
+        del self.projects[project_id]
+        self._broadcast("project_removed", {"id": project_id})
+        self._record_log(None, "system", f"Proyecto cerrado: {project.name}")
 
     async def set_status(
         self,

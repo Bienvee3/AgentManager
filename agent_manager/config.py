@@ -46,6 +46,8 @@ class Settings:
     project: Path | None = None
     # "config": agents come from agents.yaml. "omp": from the project's agent definitions.
     agents_source: str = "config"
+    # Watch every omp project with a live session (one room each), not just `project`.
+    discover_all: bool = False
 
 
 def _resolve_path(path: str | None) -> tuple[Path, bool]:
@@ -69,7 +71,7 @@ def _compile(pattern: str, where: str) -> re.Pattern:
         raise SystemExit(f"Invalid regex in {where}: {pattern!r} ({exc})") from None
 
 
-def load_settings(path: str | None = None, project: str | None = None) -> Settings:
+def load_settings(path: str | None = None, project: str | None = None, all_projects: bool = False) -> Settings:
     cfg_path, found = _resolve_path(path)
     try:
         raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
@@ -91,11 +93,13 @@ def load_settings(path: str | None = None, project: str | None = None) -> Settin
         project_dir = Path(project).expanduser().resolve()
         if not project_dir.is_dir():
             raise SystemExit(f"Project directory not found: {project}")
-    elif not found:
+    elif not found and not all_projects:
         project_dir = Path.cwd().resolve()
 
     startup_logs: list[str] = []
-    if not found:
+    if all_projects:
+        startup_logs.append("Watching all active omp projects")
+    elif not found:
         startup_logs.append(f"No agents.yaml: using the omp agents of project {project_dir}")
     elif project_dir is not None:
         startup_logs.append(f"Watching omp sessions of project {project_dir}")
@@ -120,6 +124,7 @@ def load_settings(path: str | None = None, project: str | None = None) -> Settin
             startup_logs=startup_logs,
             project=project_dir,
             agents_source="config" if found else "omp",
+            discover_all=all_projects,
         )
     except (TypeError, ValueError) as exc:
         raise SystemExit(f"Invalid config {cfg_path}: {exc}") from None

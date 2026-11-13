@@ -47,10 +47,12 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.hub = hub
         monitor = asyncio.create_task(hub.run_stale_monitor())
         tasks = [monitor]
-        if settings.project is not None:
-            from .omp_source import OmpWatcher
+        if settings.project is not None or settings.discover_all:
+            from .omp_source import ProjectsWatcher
 
-            tasks.append(asyncio.create_task(OmpWatcher(hub, settings.project).run()))
+            pinned = [settings.project] if settings.project is not None else []
+            watcher = ProjectsWatcher(hub, pinned, settings.discover_all)
+            tasks.append(asyncio.create_task(watcher.run()))
         try:
             yield
         finally:

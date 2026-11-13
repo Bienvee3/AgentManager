@@ -1,14 +1,14 @@
-"""omp (oh-my-pi) integration: per-project agent roster + live session watcher.
+"""omp (oh-my-pi) integration: per-project agent rosters + live session watcher.
 
-Two independent pieces, both read-only and project-driven (nothing is hard-coded):
+Read-only and driven by the projects omp is actually used in (nothing is hard-coded):
 
 * ``discover_roster``  - the agent *definitions* omp would offer in a project:
   nearest ``<project>/.omp/agents/*.md``, then ``~/.omp/agent/agents/*.md``, then the
   bundled agents (first name wins, like omp's own discovery). Each definition's model
   is resolved through ``modelRoles`` in omp's ``config.yml``.
-* ``OmpWatcher`` - tails the project's omp session files
+* ``ProjectsWatcher`` - opens one room per active project and tails its omp session files
   (``<agent dir>/sessions/<project slug>/<session>.jsonl`` and the per-subagent
-  ``<session>/<Name>.jsonl`` files) and turns them into live agent status.
+  ``<session>/<Name>.jsonl`` files) to light the matching roster desks.
 
 Only structural fields are read (model, stop reason, tool name, intent). Usage and cost
 records present in those files are deliberately ignored.
@@ -17,17 +17,18 @@ records present in those files are deliberately ignored.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import yaml
 
-from .models import AgentState, Status
+from .models import AgentState, ProjectState, Status
 
 # Bundled omp agents are embedded in the omp binary (no file to read).
 BUNDLED_AGENTS = {
@@ -37,8 +38,10 @@ BUNDLED_AGENTS = {
     "security-reviewer": "Security review",
     "sonic": "Mechanical low-reasoning agent",
 }
-MAIN_AGENT_ID = "omp-main"
 IDLE_AFTER_S = 300  # unfinished work with no file activity for this long is shown as paused
+ACTIVE_S = 900  # a session with activity inside this window makes its project "active" (opens a room)
+CLOSE_GRACE_S = 60  # an inactive project's room closes after this long
+DISCOVERY_INTERVAL_S = 10  # how often active projects / rosters are re-discovered
 FRESH_S = 3600  # session files untouched for longer than this are not live: shown offline / not listed
 MAX_LINE_BYTES = 64 * 1024 * 1024
 
@@ -51,6 +54,19 @@ def agent_dir() -> Path:
 def slug(name: str, prefix: str = "") -> str:
     text = re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-") or "agent"
     return (prefix + text)[:64].strip("-") or "agent"
+
+
+def project_key(path: Path) -> str:
+    digest = hashlib.sha1(os.path.normcase(str(path)).encode()).hexdigest()[:6]
+    return f"{slug(path.name)[:40]}-{digest}"
+
+
+def main_agent_id(key: str) -> str:
+    return f"{key}--main"
+
+
+def agent_id_for(key: str, name: str) -> str:
+    return slug(name, f"{key}--")
 
 
 # --------------------------------------------------------------------------- roster
@@ -162,16 +178,17 @@ def agent_model(definition: AgentDef, cfg: ModelConfig) -> str | None:
     return cfg.resolve(selector) or cfg.roles.get("default")
 
 
-def discover_roster(project: Path, home_agent_dir: Path | None = None) -> list[AgentState]:
-    """Agents omp would offer in ``project``: main session first, then definitions."""
+def discover_roster(project: Path, key: str, home_agent_dir: Path | None = None) -> list[AgentState]:
+    """Agents omp would offer in ``project`` (room ``key``): main session first, then definitions."""
     home = home_agent_dir or agent_dir()
     cfg = load_model_config(project, home)
     agents = [
         AgentState(
-            id=MAIN_AGENT_ID,
+            id=main_agent_id(key),
             name="Sesión principal",
             role="omp main",
             model=cfg.roles.get("default"),
+            project=key,
             desk=0,
             source="config",
             status=Status.offline,
@@ -180,10 +197,11 @@ def discover_roster(project: Path, home_agent_dir: Path | None = None) -> list[A
     for index, definition in enumerate(load_agent_defs(project, home), start=1):
         agents.append(
             AgentState(
-                id=slug(definition.name),
+                id=agent_id_for(key, definition.name),
                 name=definition.name,
-                role=definition.source if definition.source != "bundled" else "bundled",
+                role=definition.source,
                 model=agent_model(definition, cfg),
+                project=key,
                 desk=index,
                 source="config",
                 status=Status.idle,
@@ -265,7 +283,6 @@ def newest_session(directory: Path) -> Path | None:
 @dataclass
 class Update:
     key: str  # file path, stable per agent
-    agent_id: str
     name: str
     role: str
     model: str | None
@@ -415,7 +432,6 @@ class Tracker:
             status, detail = Status.paused, "Sin actividad reciente"
         return Update(
             key=str(self.path),
-            agent_id=MAIN_AGENT_ID if self.is_main else (slug(self.definition) if self.definition else ""),
             name="Sesión principal" if self.is_main else self.path.stem,
             role="omp main" if self.is_main else self.definition,
             model=self.model,
@@ -485,20 +501,90 @@ def aggregate(group: list[Update]) -> tuple[Status, str, str, str | None]:
     return best.status, best.task, detail, best.error_kind
 
 
-class OmpWatcher:
-    """Pushes session activity of one project into the hub."""
+def session_exited(path: Path) -> bool:
+    """True when the last line of a session file is the ``session_exit`` marker."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            fh.seek(max(0, size - 4096))
+            tail = fh.read()
+    except OSError:
+        return False
+    lines = [raw for raw in tail.split(b"\n") if raw.strip()]
+    return bool(lines) and b'"session_exit"' in lines[-1]
 
-    def __init__(self, hub: Any, project: Path, poll_s: float = 2.0, home_agent_dir: Path | None = None) -> None:
+
+def discover_active_projects(home: Path, now: float) -> set[Path]:
+    """Projects (by session header cwd) with a live omp session: recent activity, not exited."""
+    root = home / "sessions"
+    found: set[Path] = set()
+    if not root.is_dir():
+        return found
+    for directory in root.iterdir():
+        if not directory.is_dir():
+            continue
+        newest = newest_session(directory)
+        if newest is None:
+            continue
+        try:
+            if now - _session_activity(newest) > ACTIVE_S:
+                continue
+        except OSError:
+            continue
+        if session_exited(newest):
+            continue
+        cwd = _read_header_cwd(newest)
+        if cwd and Path(cwd).is_dir():
+            found.add(Path(cwd).resolve())
+    return found
+
+
+@dataclass
+class ProjectRuntime:
+    """One open room."""
+
+    path: Path
+    key: str
+    room: int
+    pinned: bool
+    scanner: SessionScanner
+    last: dict[str, tuple] = field(default_factory=dict)
+    driven: set[str] = field(default_factory=set)  # roster desks currently driven by running instances
+    inactive_since: float | None = None
+
+
+class ProjectsWatcher:
+    """Opens one room per active omp project and keeps its agents' status in the hub.
+
+    Pinned projects (``--project`` / cwd) always have a room; discovered ones open while
+    their omp session is live and close CLOSE_GRACE_S after it ends. Rooms only ever hold
+    roster agents: running subagents light their roster desk, nothing is created from
+    session files.
+    """
+
+    def __init__(
+        self,
+        hub: Any,
+        pinned: list[Path],
+        discover: bool,
+        poll_s: float = 2.0,
+        home_agent_dir: Path | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         self.hub = hub
+        self.pinned = [p.resolve() for p in pinned]
+        self.discover = discover
         self.poll_s = poll_s
-        self.scanner = SessionScanner(project, home_agent_dir)
-        self._last: dict[str, tuple] = {}
-        self._driven: set[str] = set()  # roster desks currently driven by running instances
+        self.home = home_agent_dir or agent_dir()
+        self.clock = clock
+        self.runtimes: dict[str, ProjectRuntime] = {}
+        self._active: set[Path] = set()
+        self._last_discovery: float | None = None
 
     async def run(self) -> None:
         while True:
             try:
-                await self.apply_all(await asyncio.to_thread(self.scanner.scan))
+                await self.tick()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - the watcher must survive odd files
@@ -506,33 +592,92 @@ class OmpWatcher:
                 await asyncio.sleep(self.poll_s * 5)
             await asyncio.sleep(self.poll_s)
 
-    async def apply_all(self, updates: list[Update]) -> None:
-        """Light up roster desks. Nothing is ever created: instances whose definition
-        is not already a config/roster agent are ignored."""
+    async def tick(self) -> None:
+        now = self.clock()
+        discovery_tick = self._last_discovery is None or now - self._last_discovery >= DISCOVERY_INTERVAL_S
+        if discovery_tick:
+            self._last_discovery = now
+            if self.discover:
+                self._active = await asyncio.to_thread(discover_active_projects, self.home, now)
+        pinned_keys = {project_key(p) for p in self.pinned}
+        wanted = {project_key(p): p for p in [*self.pinned, *sorted(self._active, key=str)]}
+        for key, path in wanted.items():
+            if key not in self.runtimes:
+                await self._open(key, path, key in pinned_keys)
+        for key, rt in list(self.runtimes.items()):
+            if key in wanted:
+                rt.inactive_since = None
+            else:
+                if rt.inactive_since is None:
+                    rt.inactive_since = now
+                if now - rt.inactive_since >= CLOSE_GRACE_S:
+                    await self.hub.remove_project(key)
+                    del self.runtimes[key]
+                    continue
+            await self._apply(rt, await asyncio.to_thread(rt.scanner.scan))
+            if discovery_tick:
+                await self._refresh_roster(rt)
+
+    async def _open(self, key: str, path: Path, pinned: bool) -> None:
+        used = {rt.room for rt in self.runtimes.values()}
+        room = next(i for i in range(len(used) + 1) if i not in used)
+        self.runtimes[key] = ProjectRuntime(path, key, room, pinned, SessionScanner(path, self.home))
+        await self.hub.upsert_project(ProjectState(id=key, name=path.name, path=str(path), room=room))
+        for agent in discover_roster(path, key, self.home):
+            await self.hub.put_agent(agent)
+        await self.hub.log(None, "system", f"Proyecto abierto: {path.name} (sala {room + 1})")
+
+    async def _refresh_roster(self, rt: ProjectRuntime) -> None:
+        """Pick up added/removed agent definitions and model changes."""
         hub = self.hub
+        fresh = discover_roster(rt.path, rt.key, self.home)
+        main_id = main_agent_id(rt.key)
+        for agent in fresh:
+            current = hub.agents.get(agent.id)
+            if agent.id == main_id and current is not None and current.model:
+                agent.model = current.model  # the session's real model beats the configured default
+            await hub.put_agent(agent)
+        ids = {a.id for a in fresh}
+        for agent in [a for a in hub.agents.values() if a.project == rt.key and a.source == "config"]:
+            if agent.id not in ids:
+                await hub.remove_agent(agent.id)
+                rt.last.pop(agent.id, None)
+                rt.driven.discard(agent.id)
+
+    async def _apply(self, rt: ProjectRuntime, updates: list[Update]) -> None:
+        """Light roster desks. Instances whose definition is not on the roster are ignored."""
+        hub = self.hub
+        main_id = main_agent_id(rt.key)
         groups: dict[str, list[Update]] = {}
         for update in updates:
             if update.is_main:
-                agent = hub.agents.get(MAIN_AGENT_ID)
+                agent = hub.agents.get(main_id)
                 if agent is not None and agent.source == "config":
                     if update.model and agent.model != update.model:
-                        await hub.upsert_agent(MAIN_AGENT_ID, model=update.model)
-                    await self._push(MAIN_AGENT_ID, update.status, update.task, update.detail, update.error_kind)
+                        await hub.upsert_agent(main_id, model=update.model)
+                    await self._push(rt, main_id, update.status, update.task, update.detail, update.error_kind)
                 continue
-            agent = hub.agents.get(update.agent_id) if update.agent_id else None
-            if agent is None or agent.source != "config":
+            if not update.definition:
                 continue
-            groups.setdefault(update.agent_id, []).append(update)
+            agent_id = agent_id_for(rt.key, update.definition)
+            agent = hub.agents.get(agent_id)
+            if agent is None or agent.source != "config" or agent.project != rt.key:
+                continue
+            groups.setdefault(agent_id, []).append(update)
             for level, message in update.logs:
-                await hub.log(update.agent_id, level, f"{update.name}: {message}")
+                await hub.log(agent_id, level, f"{update.name}: {message}")
         for agent_id, group in groups.items():
-            await self._push(agent_id, *aggregate(group))
-        for agent_id in self._driven - groups.keys():  # no running instance any more
-            await self._push(agent_id, Status.idle, "", "Disponible", None)
-        self._driven = set(groups)
+            await self._push(rt, agent_id, *aggregate(group))
+        for agent_id in rt.driven - groups.keys():  # no running instance any more
+            await self._push(rt, agent_id, Status.idle, "", "Disponible", None)
+        rt.driven = set(groups)
 
-    async def _push(self, agent_id: str, status: Status, task: str, detail: str, error_kind: str | None) -> None:
+    async def _push(
+        self, rt: ProjectRuntime, agent_id: str, status: Status, task: str, detail: str, error_kind: str | None
+    ) -> None:
+        if agent_id not in self.hub.agents:
+            return
         state = (status, task, detail, error_kind)
-        if self._last.get(agent_id) != state:
-            self._last[agent_id] = state
+        if rt.last.get(agent_id) != state:
+            rt.last[agent_id] = state
             await self.hub.set_status(agent_id, status, task=task, detail=detail, error_kind=error_kind)

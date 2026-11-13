@@ -30,6 +30,7 @@ class AgentState(BaseModel):
     name: str
     role: str = ""
     model: str | None = None
+    project: str | None = None  # project key (omp rooms); None = main office
     avatar: int | None = Field(default=None, ge=0, le=3)
     desk: int = 0
     source: Literal["config", "runtime"] = "runtime"
@@ -40,6 +41,13 @@ class AgentState(BaseModel):
     last_seen: datetime | None = None
     heartbeat_interval_s: float | None = None
     pending_approvals: int = 0
+
+
+class ProjectState(BaseModel):
+    id: str  # project key
+    name: str  # folder name
+    path: str
+    room: int  # 0 = main office
 
 
 class Approval(BaseModel):
