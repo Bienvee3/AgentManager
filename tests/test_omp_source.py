@@ -327,19 +327,54 @@ def test_running_subagent_lights_its_roster_desk_and_creates_nothing(world):
     assert not any(m.startswith("WebUi:") for m in logs)  # replay is silent
 
 
-def test_parallel_instances_of_one_definition_share_the_desk(world):
-    main, hub, tick, key, _, _ = world
-    one = make_sub(main, "One", "task", assistant("toolUse", [("read", "Reading A")]))
-    make_sub(main, "Two", "task", assistant("toolUse", [("read", "Reading B")]))
-    tick()
-    assert desk(hub, key, "task").status == Status.working
-    assert desk(hub, key, "task").detail.endswith("(+1 en paralelo)")
+def extras(hub, key):
+    return {a.id: a for a in hub.agents.values() if a.project == key and a.id.startswith(f"{key}--run-")}
 
-    append(one, assistant("stop", text="x"))
-    os.utime(one, (time.time() - 5, time.time() - 5))
+
+def test_every_parallel_instance_gets_its_own_figure(world):
+    main, hub, tick, key, _, _ = world
+    tick()  # opens the room with its plain roster
+    roster_ids = set(hub.agents)
+    runs = [
+        make_sub(main, name, "task", assistant("toolUse", [("read", f"Reading {name}")]))
+        for name in ("Alpha", "Beta", "Gamma", "Delta")
+    ]
     tick()
-    assert desk(hub, key, "task").status == Status.working  # the other instance is still running
-    assert "paralelo" not in desk(hub, key, "task").detail
+    base = desk(hub, key, "task")
+    assert (base.status, base.detail) == (Status.working, "Reading Alpha")  # first run (by file name) owns the desk
+    spare = extras(hub, key)
+    assert len(spare) == 3
+    assert {a.name for a in spare.values()} == {"task · Beta", "task · Gamma", "task · Delta"}
+    assert all(a.status == Status.working and a.source == "runtime" and a.desk >= 1000 for a in spare.values())
+    assert {a.detail for a in spare.values()} == {"Reading Beta", "Reading Gamma", "Reading Delta"}
+    assert "paralelo" not in base.detail
+
+    tick()  # unchanged -> same extras, no churn
+    assert set(extras(hub, key)) == set(spare)
+
+    for path in runs[1:3]:  # Beta and Gamma finish
+        append(path, assistant("stop", text="done"))
+    tick()
+    left = extras(hub, key)
+    assert len(left) == 1 and next(iter(left.values())).name == "task · Delta"
+    assert desk(hub, key, "task").status == Status.working
+
+    for path in (runs[0], runs[3]):
+        append(path, assistant("stop", text="done"))
+    tick()
+    assert extras(hub, key) == {}
+    assert (desk(hub, key, "task").status, desk(hub, key, "task").detail) == (Status.idle, "Tarea completada")
+    assert set(hub.agents) == roster_ids  # back to the plain roster
+
+
+def test_closing_a_room_also_removes_its_parallel_runs(world):
+    main, hub, tick, key, _, _ = world
+    make_sub(main, "A", "task", assistant("toolUse", [("read", "x")]))
+    make_sub(main, "B", "task", assistant("toolUse", [("read", "y")]))
+    tick()
+    assert len(extras(hub, key)) == 1
+    asyncio.run(hub.remove_project(key))
+    assert not any(a.project == key for a in hub.agents.values())
 
 
 def test_finished_instance_leaves_desk_idle_and_unknown_definitions_are_ignored(world):

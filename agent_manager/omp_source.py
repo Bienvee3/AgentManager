@@ -487,21 +487,16 @@ class SessionScanner:
 
 
 _RANK = {Status.working: 4, Status.error: 3, Status.paused: 2, Status.idle: 1, Status.offline: 0}
+LIVE_STATUSES = frozenset({Status.working, Status.paused, Status.error})
+EXTRA_DESK_BASE = 1000  # transient parallel runs sort after every roster desk
 
 
-def aggregate(group: list[Update]) -> tuple[Status, str, str, str | None]:
-    """Fold the running instances of one agent definition into its desk's state.
-
-    working beats error beats paused beats idle; ties go to the most recently active file.
-    """
+def settle(group: list[Update]) -> tuple[Status, str, str, str | None]:
+    """Desk state of a definition with no live instance: how the most recent run ended."""
     best = max(group, key=lambda u: (_RANK.get(u.status, 1), u.activity))
-    if best.status == Status.offline:  # long-quiet instances: the desk is simply available
+    if best.status == Status.offline:  # long-quiet runs: the desk is simply available
         return Status.idle, "", "Disponible", None
-    detail = best.detail
-    parallel = sum(1 for u in group if u.status == Status.working) - 1
-    if best.status == Status.working and parallel > 0:
-        detail = f"{detail} (+{parallel} en paralelo)".strip()
-    return best.status, best.task, detail, best.error_kind
+    return best.status, best.task, best.detail, best.error_kind
 
 
 def session_exited(path: Path) -> bool:
@@ -552,7 +547,9 @@ class ProjectRuntime:
     pinned: bool
     scanner: SessionScanner
     last: dict[str, tuple] = field(default_factory=dict)
-    driven: set[str] = field(default_factory=set)  # roster desks currently driven by running instances
+    driven: set[str] = field(default_factory=set)  # roster desks currently driven by live instances
+    extras: dict[str, tuple[str, int]] = field(default_factory=dict)  # run file -> (extra agent id, desk)
+    extra_seq: int = 0
     inactive_since: float | None = None
 
 
@@ -648,7 +645,12 @@ class ProjectsWatcher:
                 rt.driven.discard(agent.id)
 
     async def _apply(self, rt: ProjectRuntime, updates: list[Update]) -> None:
-        """Light roster desks. Instances whose definition is not on the roster are ignored."""
+        """Light roster desks. Instances whose definition is not on the roster are ignored.
+
+        The first live instance of a definition drives that definition's own desk; every
+        further live instance (e.g. 4 parallel ``implementer`` runs) appears as a transient
+        extra agent on a spare desk and disappears when it finishes.
+        """
         hub = self.hub
         main_id = main_agent_id(rt.key)
         groups: dict[str, list[Update]] = {}
@@ -667,13 +669,61 @@ class ProjectsWatcher:
             if agent is None or agent.source != "config" or agent.project != rt.key:
                 continue
             groups.setdefault(agent_id, []).append(update)
-            for level, message in update.logs:
-                await hub.log(agent_id, level, f"{update.name}: {message}")
+
+        live_extras: set[str] = set()
+        driven: set[str] = set()
         for agent_id, group in groups.items():
-            await self._push(rt, agent_id, *aggregate(group))
-        for agent_id in rt.driven - groups.keys():  # no running instance any more
-            await self._push(rt, agent_id, Status.idle, "", "Disponible", None)
-        rt.driven = set(groups)
+            group.sort(key=lambda u: u.key)  # stable order: the same run keeps the same desk
+            live = [u for u in group if u.status in LIVE_STATUSES]
+            if not live:
+                await self._push(rt, agent_id, *settle(group))
+                for update in group:
+                    for level, message in update.logs:
+                        await hub.log(agent_id, level, f"{update.name}: {message}")
+                continue
+            driven.add(agent_id)
+            for position, update in enumerate(live):
+                if position == 0:
+                    target = agent_id
+                else:
+                    target = await self._ensure_extra(rt, hub.agents[agent_id], update)
+                    live_extras.add(target)
+                await self._push(rt, target, update.status, update.task, update.detail, update.error_kind)
+                for level, message in update.logs:
+                    await hub.log(target, level, f"{update.name}: {message}")
+
+        for agent_id in rt.driven - driven:  # no live instance any more
+            if agent_id not in groups:
+                await self._push(rt, agent_id, Status.idle, "", "Disponible", None)
+        rt.driven = driven
+        for update_key, (extra_id, _desk) in list(rt.extras.items()):
+            if extra_id not in live_extras:
+                await hub.remove_agent(extra_id)
+                rt.last.pop(extra_id, None)
+                del rt.extras[update_key]
+
+    async def _ensure_extra(self, rt: ProjectRuntime, base: AgentState, update: Update) -> str:
+        known = rt.extras.get(update.key)
+        if known is not None:
+            return known[0]
+        digest = hashlib.sha1(update.key.encode()).hexdigest()[:8]
+        extra_id = f"{rt.key}--run-{digest}"
+        rt.extra_seq += 1
+        desk = EXTRA_DESK_BASE + rt.extra_seq
+        rt.extras[update.key] = (extra_id, desk)
+        await self.hub.put_agent(
+            AgentState(
+                id=extra_id,
+                name=f"{base.name} · {update.name}",
+                role=base.name,
+                model=update.model or base.model,
+                project=rt.key,
+                desk=desk,
+                source="runtime",
+                status=Status.idle,
+            )
+        )
+        return extra_id
 
     async def _push(
         self, rt: ProjectRuntime, agent_id: str, status: Status, task: str, detail: str, error_kind: str | None

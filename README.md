@@ -43,7 +43,7 @@ Run it from anywhere with the full path, e.g. `C:\Users\Bienve\dev\MyProyects\Ag
 ## What you see
 
 - **Rooms**: the first project takes the main office (you are `TÚ`, at the director's desk); each further project gets its own room. Switch with a door, the tabs at the top, or `←` / `→`. A room opens while the project's omp session is active (activity in the last 15 min) and closes 60 s after it ends.
-- **Agents**: every agent omp offers in that project has a desk, with its model. Only agents that are working are on stage: they walk in, sit and type with a status tag, and leave when done. Errors show for ~2 min. An agent waiting for approval stands and waves with an `[APROBAR]` / `[RECHAZAR]` bubble. Click an agent for details.
+- **Agents**: every agent omp offers in that project has a desk, with its model. Only agents that are working are on stage: they walk in, sit and type with a status tag, and leave when done. Parallel runs of the same agent (e.g. 4 `implementer`) each get their own figure (`implementer · RunName`) on a spare desk. Errors show for ~2 min. An agent waiting for approval stands and waves with an `[APROBAR]` / `[RECHAZAR]` bubble. Click an agent for details.
 - **Agent sources**, like omp: `<project>\.omp\agents\*.md`, then `~\.omp\agent\agents\*.md`, then the bundled agents. A project agent overrides a user agent with the same name. Add an agent file and its desk appears within ~10 s.
 - **Read-only**: it only reads omp's session files (model, tool name, intent); cost and token data are ignored. omp's own approvals are not intercepted; the approve/reject buttons work for agents that call the Manager API.
 
